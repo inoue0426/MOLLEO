@@ -1,14 +1,15 @@
+import math
 import os
-import yaml
 import random
-import torch
+
 import numpy as np
+import tdc
+import torch
+import yaml
+from main.utils.chem import *
 from rdkit import Chem
 from rdkit.Chem import Draw
-import tdc
 from tdc.generation import MolGen
-from main.utils.chem import *
-import math
 
 
 class Objdict(dict):
@@ -32,15 +33,21 @@ def top_auc(buffer, top_n, finish, freq_log, max_oracle_calls):
     sum = 0
     prev = 0
     called = 0
-    ordered_results = list(sorted(buffer.items(), key=lambda kv: kv[1][1], reverse=False)) # increasing order
+    ordered_results = list(
+        sorted(buffer.items(), key=lambda kv: kv[1][1], reverse=False)
+    )  # increasing order
     for idx in range(freq_log, min(len(buffer), max_oracle_calls), freq_log):
         temp_result = ordered_results[:idx]
-        temp_result = list(sorted(temp_result, key=lambda kv: kv[1][0], reverse=True))[:top_n]
+        temp_result = list(sorted(temp_result, key=lambda kv: kv[1][0], reverse=True))[
+            :top_n
+        ]
         top_n_now = np.mean([item[1][0] for item in temp_result])
         sum += freq_log * (top_n_now + prev) / 2
         prev = top_n_now
         called = idx
-    temp_result = list(sorted(ordered_results, key=lambda kv: kv[1][0], reverse=True))[:top_n]
+    temp_result = list(sorted(ordered_results, key=lambda kv: kv[1][0], reverse=True))[
+        :top_n
+    ]
     top_n_now = np.mean([item[1][0] for item in temp_result])
     sum += (len(buffer) - called) * (top_n_now + prev) / 2
     if finish and len(buffer) < max_oracle_calls:
@@ -62,12 +69,11 @@ class Oracle:
             self.freq_log = args.freq_log
 
         self.mol_buffer = mol_buffer
-        self.sa_scorer = tdc.Oracle(name = 'SA')
-        self.diversity_evaluator = tdc.Evaluator(name = 'Diversity')
+        self.sa_scorer = tdc.Oracle(name="SA")
+        self.diversity_evaluator = tdc.Evaluator(name="Diversity")
         self.last_log = 0
 
-        self.oracle_name=None
-
+        self.oracle_name = None
 
     @property
     def budget(self):
@@ -77,19 +83,22 @@ class Oracle:
         self.evaluator = evaluator
 
     def sort_buffer(self):
-        self.mol_buffer = dict(sorted(self.mol_buffer.items(), key=lambda kv: kv[1][0], reverse=True))
+        self.mol_buffer = dict(
+            sorted(self.mol_buffer.items(), key=lambda kv: kv[1][0], reverse=True)
+        )
 
     def save_result(self, suffix=None):
 
         if suffix is None:
-            output_file_path = os.path.join(self.args.output_dir, 'results.yaml')
+            output_file_path = os.path.join(self.args.output_dir, "results.yaml")
         else:
-            output_file_path = os.path.join(self.args.output_dir, 'results_' + suffix + '.yaml')
+            output_file_path = os.path.join(
+                self.args.output_dir, "results_" + suffix + ".yaml"
+            )
 
         self.sort_buffer()
-        with open(output_file_path, 'w') as f:
+        with open(output_file_path, "w") as f:
             yaml.dump(self.mol_buffer, f, sort_keys=False)
-
 
     def log_intermediate(self, mols=None, scores=None, finish=False):
 
@@ -107,8 +116,16 @@ class Oracle:
                     scores = [item[1][0] for item in temp_top100]
                     n_calls = len(self.mol_buffer)
                 else:
-                    results = list(sorted(self.mol_buffer.items(), key=lambda kv: kv[1][1], reverse=False))[:self.max_oracle_calls]
-                    temp_top100 = sorted(results, key=lambda kv: kv[1][0], reverse=True)[:100]
+                    results = list(
+                        sorted(
+                            self.mol_buffer.items(),
+                            key=lambda kv: kv[1][1],
+                            reverse=False,
+                        )
+                    )[: self.max_oracle_calls]
+                    temp_top100 = sorted(
+                        results, key=lambda kv: kv[1][0], reverse=True
+                    )[:100]
                     smis = [item[0] for item in temp_top100]
                     scores = [item[1][0] for item in temp_top100]
                     n_calls = self.max_oracle_calls
@@ -126,28 +143,34 @@ class Oracle:
         avg_sa = np.mean(self.sa_scorer(smis))
         diversity_top100 = self.diversity_evaluator(smis)
 
+        print(
+            f"{n_calls}/{self.max_oracle_calls} | "
+            f"avg_top1: {avg_top1:.3f} | "
+            f"avg_top10: {avg_top10:.3f} | "
+            f"avg_top100: {avg_top100:.3f} | "
+            f"avg_sa: {avg_sa:.3f} | "
+            f"div: {diversity_top100:.3f}"
+        )
 
-        print(f'{n_calls}/{self.max_oracle_calls} | '
-                f'avg_top1: {avg_top1:.3f} | '
-                f'avg_top10: {avg_top10:.3f} | '
-                f'avg_top100: {avg_top100:.3f} | '
-                f'avg_sa: {avg_sa:.3f} | '
-                f'div: {diversity_top100:.3f}')
-
-        print({
-            "avg_top1": avg_top1,
-            "avg_top10": avg_top10,
-            "avg_top100": avg_top100,
-            "auc_top1": top_auc(self.mol_buffer, 1, finish, self.freq_log, self.max_oracle_calls),
-            "auc_top10": top_auc(self.mol_buffer, 10, finish, self.freq_log, self.max_oracle_calls),
-            "auc_top100": top_auc(self.mol_buffer, 100, finish, self.freq_log, self.max_oracle_calls),
-            "avg_sa": avg_sa,
-            "diversity_top100": diversity_top100,
-            "n_oracle": n_calls,
-        })
-
-
-
+        print(
+            {
+                "avg_top1": avg_top1,
+                "avg_top10": avg_top10,
+                "avg_top100": avg_top100,
+                "auc_top1": top_auc(
+                    self.mol_buffer, 1, finish, self.freq_log, self.max_oracle_calls
+                ),
+                "auc_top10": top_auc(
+                    self.mol_buffer, 10, finish, self.freq_log, self.max_oracle_calls
+                ),
+                "auc_top100": top_auc(
+                    self.mol_buffer, 100, finish, self.freq_log, self.max_oracle_calls
+                ),
+                "avg_sa": avg_sa,
+                "diversity_top100": diversity_top100,
+                "n_oracle": n_calls,
+            }
+        )
 
     def __len__(self):
         return len(self.mol_buffer)
@@ -175,13 +198,13 @@ class Oracle:
                 pass
             else:
                 fitness = float(self.evaluator(smi))
-                #print(fitness, type(fitness))
+                # print(fitness, type(fitness))
                 if math.isnan(fitness):
                     fitness = 0
                 if "docking" in self.args.oracles[0]:
                     fitness *= -1
 
-                self.mol_buffer[smi] = [fitness, len(self.mol_buffer)+1]
+                self.mol_buffer[smi] = [fitness, len(self.mol_buffer) + 1]
             return self.mol_buffer[smi][0]
 
     def __call__(self, smiles_lst):
@@ -192,14 +215,20 @@ class Oracle:
             score_list = []
             for smi in smiles_lst:
                 score_list.append(self.score_smi(smi))
-                if len(self.mol_buffer) % self.freq_log == 0 and len(self.mol_buffer) > self.last_log:
+                if (
+                    len(self.mol_buffer) % self.freq_log == 0
+                    and len(self.mol_buffer) > self.last_log
+                ):
                     self.sort_buffer()
                     self.log_intermediate()
                     self.last_log = len(self.mol_buffer)
                     self.save_result(self.task_label)
         else:  ### a string of SMILES
             score_list = self.score_smi(smiles_lst)
-            if len(self.mol_buffer) % self.freq_log == 0 and len(self.mol_buffer) > self.last_log:
+            if (
+                len(self.mol_buffer) % self.freq_log == 0
+                and len(self.mol_buffer) > self.last_log
+            ):
                 self.sort_buffer()
                 self.log_intermediate()
                 self.last_log = len(self.mol_buffer)
@@ -223,12 +252,14 @@ class BaseOptimizer:
         if self.smi_file is not None:
             self.all_smiles = self.load_smiles_from_file(self.smi_file)
         else:
-            data = MolGen(name = 'ZINC')
-            self.all_smiles = data.get_data()['smiles'].tolist()
+            data = MolGen(name="ZINC")
+            self.all_smiles = data.get_data()["smiles"].tolist()
 
-        self.sa_scorer = tdc.Oracle(name = 'SA')
-        self.diversity_evaluator = tdc.Evaluator(name = 'Diversity')
-        self.filter = tdc.chem_utils.oracle.filter.MolFilter(filters = ['PAINS', 'SureChEMBL', 'Glaxo'], property_filters_flag = False)
+        self.sa_scorer = tdc.Oracle(name="SA")
+        self.diversity_evaluator = tdc.Evaluator(name="Diversity")
+        self.filter = tdc.chem_utils.oracle.filter.MolFilter(
+            filters=["PAINS", "SureChEMBL", "Glaxo"], property_filters_flag=False
+        )
 
     # def load_smiles_from_file(self, file_name):
     #     with open(file_name) as f:
@@ -245,7 +276,7 @@ class BaseOptimizer:
                         smiles_set.add(smiles)
                         new_mol_list.append(mol)
                 except ValueError:
-                    print('bad smiles')
+                    print("bad smiles")
         return new_mol_list
 
     def sort_buffer(self):
@@ -263,30 +294,47 @@ class BaseOptimizer:
         log_num_oracles = [100, 500, 1000, 3000, 5000, 10000]
         assert len(self.mol_buffer) > 0
 
-        results = list(sorted(self.mol_buffer.items(), key=lambda kv: kv[1][1], reverse=False))
+        results = list(
+            sorted(self.mol_buffer.items(), key=lambda kv: kv[1][1], reverse=False)
+        )
         if len(results) > 10000:
             results = results[:10000]
 
         results_all_level = []
         for n_o in log_num_oracles:
-            results_all_level.append(sorted(results[:n_o], key=lambda kv: kv[1][0], reverse=True))
-
+            results_all_level.append(
+                sorted(results[:n_o], key=lambda kv: kv[1][0], reverse=True)
+            )
 
         # Log batch metrics at various oracle calls
-        data = [[log_num_oracles[i]] + self._analyze_results(r) for i, r in enumerate(results_all_level)]
-        columns = ["#Oracle", "avg_top100", "avg_top10", "avg_top1", "Diversity", "avg_SA", "%Pass", "Top-1 Pass"]
+        data = [
+            [log_num_oracles[i]] + self._analyze_results(r)
+            for i, r in enumerate(results_all_level)
+        ]
+        columns = [
+            "#Oracle",
+            "avg_top100",
+            "avg_top10",
+            "avg_top1",
+            "Diversity",
+            "avg_SA",
+            "%Pass",
+            "Top-1 Pass",
+        ]
 
     def save_result(self, suffix=None):
 
         print(f"Saving molecules...")
 
         if suffix is None:
-            output_file_path = os.path.join(self.args.output_dir, 'results.yaml')
+            output_file_path = os.path.join(self.args.output_dir, "results.yaml")
         else:
-            output_file_path = os.path.join(self.args.output_dir, 'results_' + suffix + '.yaml')
+            output_file_path = os.path.join(
+                self.args.output_dir, "results_" + suffix + ".yaml"
+            )
 
         self.sort_buffer()
-        with open(output_file_path, 'w') as f:
+        with open(output_file_path, "w") as f:
             yaml.dump(self.mol_buffer, f, sort_keys=False)
 
     def _analyze_results(self, results):
@@ -299,13 +347,15 @@ class BaseOptimizer:
             top1_pass = -1
         else:
             top1_pass = np.max([scores_dict[s] for s in smis_pass])
-        return [np.mean(scores),
-                np.mean(scores[:10]),
-                np.max(scores),
-                self.diversity_evaluator(smis),
-                np.mean(self.sa_scorer(smis)),
-                float(len(smis_pass) / 100),
-                top1_pass]
+        return [
+            np.mean(scores),
+            np.mean(scores[:10]),
+            np.max(scores),
+            self.diversity_evaluator(smis),
+            np.mean(self.sa_scorer(smis)),
+            float(len(smis_pass) / 100),
+            top1_pass,
+        ]
 
     def reset(self):
         del self.oracle
@@ -322,8 +372,6 @@ class BaseOptimizer:
     def _optimize(self, oracle, config):
         raise NotImplementedError
 
-
-
     def optimize(self, oracle, config, seed=0, project="test"):
 
         np.random.seed(seed)
@@ -336,4 +384,3 @@ class BaseOptimizer:
             self.log_result()
         self.save_result(self.args.mol_lm + "_" + oracle.name + "_" + str(seed))
         self.reset()
-

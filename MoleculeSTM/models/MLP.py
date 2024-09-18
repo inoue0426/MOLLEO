@@ -1,10 +1,13 @@
+from collections.abc import Sequence
+
 from torch import nn
 from torch.nn import functional as F
-from collections.abc import Sequence
 
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, batch_norm=False, activation="relu", dropout=0):
+    def __init__(
+        self, input_dim, hidden_dims, batch_norm=False, activation="relu", dropout=0
+    ):
         super(MLP, self).__init__()
 
         if not isinstance(hidden_dims, Sequence):

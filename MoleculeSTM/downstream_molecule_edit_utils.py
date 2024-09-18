@@ -1,14 +1,16 @@
-import os
 import copy
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoTokenizer
-from MoleculeSTM.models.mega_molbart.mega_mol_bart import MegaMolBART
-from MoleculeSTM.models import GNN, GNN_graphpred, MLP
-from rdkit import Chem, RDLogger
+from rdkit import Chem, DataStructs, RDLogger
 from rdkit.Chem import AllChem, Descriptors
-from rdkit import DataStructs
+from transformers import AutoModel, AutoTokenizer
+
+from MoleculeSTM.models import GNN, MLP, GNN_graphpred
+from MoleculeSTM.models.mega_molbart.mega_mol_bart import MegaMolBART
+
 lg = RDLogger.logger()
 lg.setLevel(RDLogger.CRITICAL)
 
@@ -18,7 +20,7 @@ def get_SMILES_list(args):
         SMILES_list = [args.input_SMILES]
     else:
         SMILES_list = []
-        f = open(args.input_SMILES_file, 'r')
+        f = open(args.input_SMILES_file, "r")
         lines = f.readlines()
         for line in lines:
             SMILES = line.strip()
@@ -39,14 +41,12 @@ description_dict = {
     109: "This molecule has high bioavailability.",
     110: "This molecule has low toxicity.",
     111: "This molecule is metabolically stable.",
-    
     201: "This molecule is soluble in water and has more hydrogen bond acceptors.",
     202: "This molecule is insoluble in water and has more hydrogen bond acceptors.",
     203: "This molecule is soluble in water and has more hydrogen bond donors.",
     204: "This molecule is insoluble in water and has more hydrogen bond donors.",
     205: "This molecule is soluble in water and has high permeability.",
     206: "This molecule is soluble in water and has low permeability.",
-
     301: "This molecule looks like Penicillin.",
     302: "This molecule looks like Aspirin.",
     303: "This molecule looks like Caffeine.",
@@ -54,7 +54,6 @@ description_dict = {
     305: "This molecule looks like Dopamine.",
     306: "This molecule looks like Cysteine.",
     307: "This molecule looks like Glutathione.",
-    
     401: "This molecule is tested positive in an assay that are inhibitors and substrates of an enzyme protein. It uses molecular oxygen inserting one oxygen atom into a substrate, and reducing the second into a water molecule.",
     402: "This molecule is tested positive in an assay for Anthrax Lethal, which acts as a protease that cleaves the N-terminal of most dual specificity mitogen-activated protein kinase kinases.",
     403: "This molecule is tested positive in an assay for Activators of ClpP, which cleaves peptides in various proteins in a process that requires ATP hydrolysis and has a limited peptidase activity in the absence of ATP-binding subunits.",
@@ -111,59 +110,110 @@ def load_molecule_models(args):
     """
     if args.MoleculeSTM_molecule_type == "SMILES":
         # This is loading from the pretarined_MegaMolBART
-        MegaMolBART_wrapper = MegaMolBART(vocab_path=args.vocab_path, input_dir=args.MegaMolBART_generation_model_dir, output_dir=None)
+        MegaMolBART_wrapper = MegaMolBART(
+            vocab_path=args.vocab_path,
+            input_dir=args.MegaMolBART_generation_model_dir,
+            output_dir=None,
+        )
         molecule_model_generation = copy.deepcopy(MegaMolBART_wrapper.model)
-        print("Loading from pretrained MegaMolBART ({}).".format(args.MegaMolBART_generation_model_dir))
+        print(
+            "Loading from pretrained MegaMolBART ({}).".format(
+                args.MegaMolBART_generation_model_dir
+            )
+        )
         molecule_dim_generation = 256
-        
-        input_model_path = os.path.join(args.MoleculeSTM_model_dir, "molecule_model.pth")
+
+        input_model_path = os.path.join(
+            args.MoleculeSTM_model_dir, "molecule_model.pth"
+        )
         molecule_model_MoleculeSTM = MegaMolBART_wrapper.model
-        state_dict = torch.load(input_model_path, map_location='cpu')
+        state_dict = torch.load(input_model_path, map_location="cpu")
         print("Loading from {}...".format(input_model_path))
         molecule_model_MoleculeSTM.load_state_dict(state_dict)
         molecule_dim_MoleculeSTM = args.SSL_emb_dim
-        
+
         mol2latent_MoleculeSTM = nn.Linear(256, molecule_dim_MoleculeSTM)
-        input_model_path = os.path.join(args.MoleculeSTM_model_dir, "mol2latent_model.pth")
+        input_model_path = os.path.join(
+            args.MoleculeSTM_model_dir, "mol2latent_model.pth"
+        )
         print("Loading from {}...".format(input_model_path))
-        state_dict = torch.load(input_model_path, map_location='cpu')
+        state_dict = torch.load(input_model_path, map_location="cpu")
         mol2latent_MoleculeSTM.load_state_dict(state_dict)
 
     else:
         # This is loading from the pretarined_MegaMolBART
-        MegaMolBART_wrapper = MegaMolBART(vocab_path=args.vocab_path, input_dir=args.MegaMolBART_generation_model_dir, output_dir=None)
+        MegaMolBART_wrapper = MegaMolBART(
+            vocab_path=args.vocab_path,
+            input_dir=args.MegaMolBART_generation_model_dir,
+            output_dir=None,
+        )
         molecule_model_generation = copy.deepcopy(MegaMolBART_wrapper.model)
-        print("Loading from pretrained MegaMolBART ({}).".format(args.MegaMolBART_generation_model_dir))
+        print(
+            "Loading from pretrained MegaMolBART ({}).".format(
+                args.MegaMolBART_generation_model_dir
+            )
+        )
         molecule_dim_generation = 256
 
         # This is loading GNN from the pretrained_GNN
-        molecule_node_model = GNN(num_layer=args.num_layer, emb_dim=args.gnn_emb_dim, JK=args.JK, drop_ratio=args.dropout_ratio, gnn_type=args.gnn_type)
-        molecule_model_MoleculeSTM = GNN_graphpred(num_layer=args.num_layer, emb_dim=args.gnn_emb_dim, JK=args.JK, graph_pooling=args.graph_pooling, num_tasks=1, molecule_node_model=molecule_node_model) 
-        print("Start from pretrained model (MoleculeSTM) in {}.".format(args.MoleculeSTM_model_dir))
-        input_model_path = os.path.join(args.MoleculeSTM_model_dir, "molecule_model.pth")
-        state_dict = torch.load(input_model_path, map_location='cpu')
+        molecule_node_model = GNN(
+            num_layer=args.num_layer,
+            emb_dim=args.gnn_emb_dim,
+            JK=args.JK,
+            drop_ratio=args.dropout_ratio,
+            gnn_type=args.gnn_type,
+        )
+        molecule_model_MoleculeSTM = GNN_graphpred(
+            num_layer=args.num_layer,
+            emb_dim=args.gnn_emb_dim,
+            JK=args.JK,
+            graph_pooling=args.graph_pooling,
+            num_tasks=1,
+            molecule_node_model=molecule_node_model,
+        )
+        print(
+            "Start from pretrained model (MoleculeSTM) in {}.".format(
+                args.MoleculeSTM_model_dir
+            )
+        )
+        input_model_path = os.path.join(
+            args.MoleculeSTM_model_dir, "molecule_model.pth"
+        )
+        state_dict = torch.load(input_model_path, map_location="cpu")
         molecule_model_MoleculeSTM.load_state_dict(state_dict)
         molecule_dim_MoleculeSTM = args.SSL_emb_dim
-        
+
         mol2latent_MoleculeSTM = nn.Linear(300, molecule_dim_MoleculeSTM)
-        input_model_path = os.path.join(args.MoleculeSTM_model_dir, "mol2latent_model.pth")
+        input_model_path = os.path.join(
+            args.MoleculeSTM_model_dir, "mol2latent_model.pth"
+        )
         print("Loading from {}...".format(input_model_path))
-        state_dict = torch.load(input_model_path, map_location='cpu')
+        state_dict = torch.load(input_model_path, map_location="cpu")
         mol2latent_MoleculeSTM.load_state_dict(state_dict)
 
-    return MegaMolBART_wrapper, molecule_model_generation, molecule_dim_generation, \
-        molecule_model_MoleculeSTM, mol2latent_MoleculeSTM, molecule_dim_MoleculeSTM
+    return (
+        MegaMolBART_wrapper,
+        molecule_model_generation,
+        molecule_dim_generation,
+        molecule_model_MoleculeSTM,
+        mol2latent_MoleculeSTM,
+        molecule_dim_MoleculeSTM,
+    )
 
 
 def load_language_molecule_and_edit_models(args):
-    pretrained_SciBERT_folder = os.path.join(args.dataspace_path, 'pretrained_SciBERT')
-    text_tokenizer = AutoTokenizer.from_pretrained('allenai/scibert_scivocab_uncased', cache_dir=pretrained_SciBERT_folder)
-    text_model = AutoModel.from_pretrained('allenai/scibert_scivocab_uncased', cache_dir=pretrained_SciBERT_folder)
+    pretrained_SciBERT_folder = os.path.join(args.dataspace_path, "pretrained_SciBERT")
+    text_tokenizer = AutoTokenizer.from_pretrained(
+        "allenai/scibert_scivocab_uncased", cache_dir=pretrained_SciBERT_folder
+    )
+    text_model = AutoModel.from_pretrained(
+        "allenai/scibert_scivocab_uncased", cache_dir=pretrained_SciBERT_folder
+    )
     text_dim = 768
 
     input_model_path = os.path.join(args.MoleculeSTM_model_dir, "text_model.pth")
     print("Loading from {}...".format(input_model_path))
-    state_dict = torch.load(input_model_path, map_location='cpu')
+    state_dict = torch.load(input_model_path, map_location="cpu")
     text_model.load_state_dict(state_dict)
 
     """
@@ -175,9 +225,17 @@ def load_language_molecule_and_edit_models(args):
     molecule_model.load_state_dict(state_dict)
     """
     # This is loading from the pretarined_MegaMolBART
-    MegaMolBART_wrapper = MegaMolBART(vocab_path=args.vocab_path, input_dir=args.MegaMolBART_generation_model_dir, output_dir=None)
+    MegaMolBART_wrapper = MegaMolBART(
+        vocab_path=args.vocab_path,
+        input_dir=args.MegaMolBART_generation_model_dir,
+        output_dir=None,
+    )
     molecule_model = MegaMolBART_wrapper.model
-    print("Loading from pretrained MegaMolBART ({}).".format(args.MegaMolBART_generation_model_dir))
+    print(
+        "Loading from pretrained MegaMolBART ({}).".format(
+            args.MegaMolBART_generation_model_dir
+        )
+    )
     molecule_dim_generation = 256
     if args.MoleculeSTM_molecule_type == "SMILES":  # For MegaMolBART
         molecule_dim_MoleculeSTM = 256
@@ -187,30 +245,49 @@ def load_language_molecule_and_edit_models(args):
     text2latent = nn.Linear(text_dim, args.SSL_emb_dim)
     input_model_path = os.path.join(args.MoleculeSTM_model_dir, "text2latent_model.pth")
     print("Loading from {}...".format(input_model_path))
-    state_dict = torch.load(input_model_path, map_location='cpu')
+    state_dict = torch.load(input_model_path, map_location="cpu")
     text2latent.load_state_dict(state_dict)
-    
+
     mol2latent = nn.Linear(molecule_dim_MoleculeSTM, args.SSL_emb_dim)
     input_model_path = os.path.join(args.MoleculeSTM_model_dir, "mol2latent_model.pth")
     print("Loading from {}...".format(input_model_path))
-    state_dict = torch.load(input_model_path, map_location='cpu')
+    state_dict = torch.load(input_model_path, map_location="cpu")
     mol2latent.load_state_dict(state_dict)
 
     # generation2MoleculeSTM = nn.Linear(molecule_dim_generation, args.SSL_emb_dim)
-    generation2MoleculeSTM = MLP(molecule_dim_generation, [args.SSL_emb_dim, args.SSL_emb_dim])
-    input_model_path = os.path.join(args.language_edit_model_dir, "generation2foundation_model.pth")
+    generation2MoleculeSTM = MLP(
+        molecule_dim_generation, [args.SSL_emb_dim, args.SSL_emb_dim]
+    )
+    input_model_path = os.path.join(
+        args.language_edit_model_dir, "generation2foundation_model.pth"
+    )
     print("Loading from {}...".format(input_model_path))
-    state_dict = torch.load(input_model_path, map_location='cpu')
+    state_dict = torch.load(input_model_path, map_location="cpu")
     generation2MoleculeSTM.load_state_dict(state_dict)
 
     # MoleculeSTM2generation = nn.Linear(args.SSL_emb_dim, molecule_dim_generation)
-    MoleculeSTM2generation = MLP(args.SSL_emb_dim, [molecule_dim_generation, molecule_dim_generation])
-    input_model_path = os.path.join(args.language_edit_model_dir, "foundation2generation_model.pth")
+    MoleculeSTM2generation = MLP(
+        args.SSL_emb_dim, [molecule_dim_generation, molecule_dim_generation]
+    )
+    input_model_path = os.path.join(
+        args.language_edit_model_dir, "foundation2generation_model.pth"
+    )
     print("Loading from {}...".format(input_model_path))
-    state_dict = torch.load(input_model_path, map_location='cpu')
+    state_dict = torch.load(input_model_path, map_location="cpu")
     MoleculeSTM2generation.load_state_dict(state_dict)
 
-    return text_model, text_tokenizer, text_dim, molecule_model, MegaMolBART_wrapper, molecule_dim_generation, text2latent, mol2latent, generation2MoleculeSTM, MoleculeSTM2generation
+    return (
+        text_model,
+        text_tokenizer,
+        text_dim,
+        molecule_model,
+        MegaMolBART_wrapper,
+        molecule_dim_generation,
+        text2latent,
+        mol2latent,
+        generation2MoleculeSTM,
+        MoleculeSTM2generation,
+    )
 
 
 def clip_loss_for_edit(molecule_repr, text_repr):
@@ -233,8 +310,8 @@ def evaluate_SMILES_list(SMILES_list, description):
     mol_list = []
     for SMILES in SMILES_list:
         mol = Chem.MolFromSmiles(SMILES)
-        #Chem.SanitizeMol(mol)
-        #print(SMILES, mol)
+        # Chem.SanitizeMol(mol)
+        # print(SMILES, mol)
         if mol is None:
             continue
         mol_list.append(mol)
@@ -245,7 +322,9 @@ def evaluate_SMILES_list(SMILES_list, description):
 
     if "soluble" in description and "insoluble" not in description:
         props = ["MolLogP"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -259,7 +338,9 @@ def evaluate_SMILES_list(SMILES_list, description):
 
     elif "insoluble" in description:
         props = ["MolLogP"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -271,9 +352,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule is more like a drug.", "This molecule is like a drug."]:
+    elif description in [
+        "This molecule is more like a drug.",
+        "This molecule is like a drug.",
+    ]:
         props = ["qed"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -285,9 +371,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule is less like a drug.", "This molecule is not like a drug."]:
+    elif description in [
+        "This molecule is less like a drug.",
+        "This molecule is not like a drug.",
+    ]:
         props = ["qed"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -299,9 +390,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule has higher permeability.", "This molecule has high permeability."]:
+    elif description in [
+        "This molecule has higher permeability.",
+        "This molecule has high permeability.",
+    ]:
         props = ["TPSA"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -313,9 +409,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule has lower permeability.", "This molecule has low permeability."]:
+    elif description in [
+        "This molecule has lower permeability.",
+        "This molecule has low permeability.",
+    ]:
         props = ["TPSA"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -327,9 +428,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule has higher molecular weight.", "This molecule has high molecular weight."]:
+    elif description in [
+        "This molecule has higher molecular weight.",
+        "This molecule has high molecular weight.",
+    ]:
         props = ["MolWt"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -341,9 +447,14 @@ def evaluate_SMILES_list(SMILES_list, description):
         else:
             answer = [False]
 
-    elif description in ["This molecule has lower molecular weight.", "This molecule has low molecular weight."]:
+    elif description in [
+        "This molecule has lower molecular weight.",
+        "This molecule has low molecular weight.",
+    ]:
         props = ["MolWt"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -357,7 +468,9 @@ def evaluate_SMILES_list(SMILES_list, description):
 
     elif description in ["This molecule has more hydrogen bond acceptors."]:
         props = ["NumHAcceptors"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -371,7 +484,9 @@ def evaluate_SMILES_list(SMILES_list, description):
 
     elif description in ["This molecule has more hydrogen bond donors."]:
         props = ["NumHDonors"]
-        prop_pred = [(n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props]
+        prop_pred = [
+            (n, func) for n, func in Descriptors.descList if n.split("_")[-1] in props
+        ]
         value_list = []
         for name, func in prop_pred:
             for SMILES, mol in zip(SMILES_list, mol_list):
@@ -388,12 +503,20 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between penicillin and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between penicillin and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between penicillin and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
+        print(
+            "similarity between penicillin and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
         if edited_similarity > original_similarity:
             answer = [True]
         else:
@@ -404,13 +527,21 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between aspirin and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between aspirin and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between aspirin and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
-        if edited_similarity > original_similarity: # check original_similarity >< 0.8
+        print(
+            "similarity between aspirin and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
+        if edited_similarity > original_similarity:  # check original_similarity >< 0.8
             answer = [True]
         else:
             answer = [False]
@@ -420,12 +551,20 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between caffeine and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between caffeine and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between caffeine and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
+        print(
+            "similarity between caffeine and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
         if edited_similarity > original_similarity:
             answer = [True]
         else:
@@ -436,13 +575,21 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between cholesterol and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between cholesterol and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between cholesterol and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
-        if edited_similarity > original_similarity: # check original_similarity >< 0.8
+        print(
+            "similarity between cholesterol and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
+        if edited_similarity > original_similarity:  # check original_similarity >< 0.8
             answer = [True]
         else:
             answer = [False]
@@ -452,12 +599,20 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between dopamine and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between dopamine and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between dopamine and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
+        print(
+            "similarity between dopamine and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
         if edited_similarity > original_similarity:
             answer = [True]
         else:
@@ -468,13 +623,21 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between cysteine and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between cysteine and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between cysteine and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
-        if edited_similarity > original_similarity: # check original_similarity >< 0.8
+        print(
+            "similarity between cysteine and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
+        if edited_similarity > original_similarity:  # check original_similarity >< 0.8
             answer = [True]
         else:
             answer = [False]
@@ -484,13 +647,21 @@ def evaluate_SMILES_list(SMILES_list, description):
         original_SMILES = SMILES_list[0]
         original_mol = mol_list[0]
         original_similarity = get_molecule_similarity(target_mol, original_mol)
-        print("similarity between glutathione and original molecules\n{} & {:.5f}".format(original_SMILES, original_similarity))
+        print(
+            "similarity between glutathione and original molecules\n{} & {:.5f}".format(
+                original_SMILES, original_similarity
+            )
+        )
 
         edited_SMILES = SMILES_list[2]
         edited_mol = mol_list[2]
         edited_similarity = get_molecule_similarity(target_mol, edited_mol)
-        print("similarity between glutathione and edited molecules\n{} & {:.5f}".format(edited_SMILES, edited_similarity))
-        if edited_similarity > original_similarity: # check original_similarity >< 0.8
+        print(
+            "similarity between glutathione and edited molecules\n{} & {:.5f}".format(
+                edited_SMILES, edited_similarity
+            )
+        )
+        if edited_similarity > original_similarity:  # check original_similarity >< 0.8
             answer = [True]
         else:
             answer = [False]

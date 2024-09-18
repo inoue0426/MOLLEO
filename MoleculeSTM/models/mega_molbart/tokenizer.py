@@ -1,13 +1,16 @@
 # coding=utf-8
 
-import re
-import torch
 import random
+import re
 from pathlib import Path
-from .util import (DEFAULT_BEGIN_TOKEN, DEFAULT_END_TOKEN, DEFAULT_PAD_TOKEN, \
-                  DEFAULT_UNK_TOKEN, DEFAULT_MASK_TOKEN, DEFAULT_SEP_TOKEN, \
-                  DEFAULT_MASK_PROB, DEFAULT_SHOW_MASK_TOKEN_PROB, DEFAULT_MASK_SCHEME, \
-                  DEFAULT_SPAN_LAMBDA, DEFAULT_VOCAB_PATH, DEFAULT_CHEM_TOKEN_START, REGEX)
+
+import torch
+
+from .util import (DEFAULT_BEGIN_TOKEN, DEFAULT_CHEM_TOKEN_START,
+                   DEFAULT_END_TOKEN, DEFAULT_MASK_PROB, DEFAULT_MASK_SCHEME,
+                   DEFAULT_MASK_TOKEN, DEFAULT_PAD_TOKEN, DEFAULT_SEP_TOKEN,
+                   DEFAULT_SHOW_MASK_TOKEN_PROB, DEFAULT_SPAN_LAMBDA,
+                   DEFAULT_UNK_TOKEN, DEFAULT_VOCAB_PATH, REGEX)
 
 
 class MolEncTokenizer:
@@ -25,9 +28,9 @@ class MolEncTokenizer:
         mask_prob=DEFAULT_MASK_PROB,
         show_mask_token_prob=DEFAULT_SHOW_MASK_TOKEN_PROB,
         mask_scheme=DEFAULT_MASK_SCHEME,
-        span_lambda=DEFAULT_SPAN_LAMBDA
+        span_lambda=DEFAULT_SPAN_LAMBDA,
     ):
-        """ Initialise the tokenizer
+        """Initialise the tokenizer
 
         Args:
             vocab (List[str]): Vocabulary for tokenizer
@@ -79,9 +82,9 @@ class MolEncTokenizer:
         mask_prob=DEFAULT_MASK_PROB,
         show_mask_token_prob=DEFAULT_SHOW_MASK_TOKEN_PROB,
         mask_scheme=DEFAULT_MASK_SCHEME,
-        span_lambda=DEFAULT_SPAN_LAMBDA
+        span_lambda=DEFAULT_SPAN_LAMBDA,
     ):
-        """ Load the tokenizer object from a vocab file and regex
+        """Load the tokenizer object from a vocab file and regex
 
         Reads a newline separated list of tokens from a file to use as the vocabulary
         Note: Assumes that the chemical tokens run from chem_tokens_start_idx to the end of the tokens list
@@ -101,7 +104,14 @@ class MolEncTokenizer:
         tokens = text.split("\n")
         tokens = [t for t in tokens if t is not None and t != ""]
 
-        token_idxs = [pad_token_idx, unk_token_idx, begin_token_idx, end_token_idx, mask_token_idx, sep_token_idx]
+        token_idxs = [
+            pad_token_idx,
+            unk_token_idx,
+            begin_token_idx,
+            end_token_idx,
+            mask_token_idx,
+            sep_token_idx,
+        ]
         extra_tokens_idxs = range(max(token_idxs) + 1, chem_tokens_start_idx)
         extra_tokens = [tokens[idx] for idx in extra_tokens_idxs]
         prog = MolEncTokenizer._get_compiled_regex(regex, extra_tokens)
@@ -127,7 +137,7 @@ class MolEncTokenizer:
             mask_prob=mask_prob,
             show_mask_token_prob=show_mask_token_prob,
             mask_scheme=mask_scheme,
-            span_lambda=span_lambda
+            span_lambda=span_lambda,
         )
         return tokenizer
 
@@ -145,14 +155,14 @@ class MolEncTokenizer:
         mask_prob=DEFAULT_MASK_PROB,
         show_mask_token_prob=DEFAULT_SHOW_MASK_TOKEN_PROB,
         mask_scheme=DEFAULT_MASK_SCHEME,
-        span_lambda=DEFAULT_SPAN_LAMBDA
+        span_lambda=DEFAULT_SPAN_LAMBDA,
     ):
-        """ Build the tokenizer from smiles strings and a regex
+        """Build the tokenizer from smiles strings and a regex
 
         Args:
             smiles (List[str]): SMILES strings to use to build vocabulary
             regex (str): Regex to use for tokenizing
-            extra_tokens (Optional[List[str]]): Additional tokens to add to the vocabulary that 
+            extra_tokens (Optional[List[str]]): Additional tokens to add to the vocabulary that
                                                 may not appear in the SMILES strings
         """
 
@@ -162,7 +172,7 @@ class MolEncTokenizer:
             begin_token: 2,
             end_token: 3,
             mask_token: 4,
-            sep_token: 5
+            sep_token: 5,
         }
 
         extra_tokens = [] if extra_tokens is None else extra_tokens
@@ -194,7 +204,7 @@ class MolEncTokenizer:
             mask_prob=mask_prob,
             show_mask_token_prob=show_mask_token_prob,
             mask_scheme=mask_scheme,
-            span_lambda=span_lambda
+            span_lambda=span_lambda,
         )
         return tokenizer
 
@@ -214,7 +224,9 @@ class MolEncTokenizer:
 
     def tokenize(self, sents1, sents2=None, mask=False, pad=False):
         if sents2 is not None and len(sents1) != len(sents2):
-            raise ValueError("Sentence 1 batch and sentence 2 batch must have the same number of elements")
+            raise ValueError(
+                "Sentence 1 batch and sentence 2 batch must have the same number of elements"
+            )
 
         tokens = self._regex_match(sents1)
         m_tokens, token_masks = self._mask_tokens(tokens, empty_mask=not mask)
@@ -222,15 +234,25 @@ class MolEncTokenizer:
         sent_masks = None
         if sents2 is not None:
             sents2_tokens = self._regex_match(sents2)
-            sents2_m_tokens, sents2_masks = self._mask_tokens(sents2_tokens, empty_mask=not mask)
-            tokens, sent_masks = self._concat_sentences(tokens, sents2_tokens, self.sep_token)
-            m_tokens, _ = self._concat_sentences(m_tokens, sents2_m_tokens, self.sep_token)
+            sents2_m_tokens, sents2_masks = self._mask_tokens(
+                sents2_tokens, empty_mask=not mask
+            )
+            tokens, sent_masks = self._concat_sentences(
+                tokens, sents2_tokens, self.sep_token
+            )
+            m_tokens, _ = self._concat_sentences(
+                m_tokens, sents2_m_tokens, self.sep_token
+            )
             token_masks, _ = self._concat_sentences(token_masks, sents2_masks, False)
 
         tokens = [[self.begin_token] + ts + [self.end_token] for ts in tokens]
         m_tokens = [[self.begin_token] + ts + [self.end_token] for ts in m_tokens]
         token_masks = [[False] + ts + [False] for ts in token_masks]
-        sent_masks = [[0] + mask + [1] for mask in sent_masks] if sent_masks is not None else None
+        sent_masks = (
+            [[0] + mask + [1] for mask in sent_masks]
+            if sent_masks is not None
+            else None
+        )
 
         output = {}
 
@@ -238,7 +260,11 @@ class MolEncTokenizer:
             tokens, orig_pad_masks = self._pad_seqs(tokens, self.pad_token)
             m_tokens, masked_pad_masks = self._pad_seqs(m_tokens, self.pad_token)
             token_masks, _ = self._pad_seqs(token_masks, False)
-            sent_masks, _ = self._pad_seqs(sent_masks, False) if sent_masks is not None else (None, None)
+            sent_masks, _ = (
+                self._pad_seqs(sent_masks, False)
+                if sent_masks is not None
+                else (None, None)
+            )
             output["original_pad_masks"] = orig_pad_masks
             output["masked_pad_masks"] = masked_pad_masks
 
@@ -267,7 +293,9 @@ class MolEncTokenizer:
         for token in extra_tokens:
             processed_token = token
             for special_character in "()[].|":
-                processed_token = processed_token.replace(special_character, f"\\{special_character}")
+                processed_token = processed_token.replace(
+                    special_character, f"\\{special_character}"
+                )
             regex_string += processed_token + r"|"
 
         regex_string += regex + r"|"
@@ -276,7 +304,10 @@ class MolEncTokenizer:
 
     def _concat_sentences(self, tokens1, tokens2, sep):
         tokens = [ts1 + [sep] + ts2 for ts1, ts2 in zip(tokens1, tokens2)]
-        sent_masks = [([0] * len(ts1)) + [0] + ([1] * len(ts2)) for ts1, ts2 in zip(tokens1, tokens2)]
+        sent_masks = [
+            ([0] * len(ts1)) + [0] + ([1] * len(ts2))
+            for ts1, ts2 in zip(tokens1, tokens2)
+        ]
         return tokens, sent_masks
 
     def detokenize(self, tokens_list):
@@ -285,7 +316,7 @@ class MolEncTokenizer:
             if tokens[0] == self.begin_token:
                 tokens = tokens[1:]
 
-            # Remove any tokens after the end token (and end token) if it's there 
+            # Remove any tokens after the end token (and end token) if it's there
             if self.end_token in tokens:
                 end_token_idx = tokens.index(self.end_token)
                 tokens = tokens[:end_token_idx]
@@ -315,7 +346,7 @@ class MolEncTokenizer:
                 token = self.decode_vocab.get(token_id)
                 if token is None:
                     raise ValueError(f"Token id {token_id} is not recognised")
- 
+
             tokens = [self.decode_vocab.get(token_id) for token_id in ids]
             tokens_list.append(tokens)
 
@@ -325,7 +356,7 @@ class MolEncTokenizer:
         print(f"{'Token':<10}Count")
         for token, cnt in self.unk_token_cnt.items():
             print(f"{token:<10}{cnt}")
-    
+
         print()
 
     @staticmethod
@@ -359,7 +390,9 @@ class MolEncTokenizer:
         mask_bools = [True, False]
         weights = [self.mask_prob, 1 - self.mask_prob]
         token_mask = random.choices(mask_bools, weights=weights, k=len(ts))
-        masked = [self._mask_token(ts[i]) if m else ts[i] for i, m in enumerate(token_mask)]
+        masked = [
+            self._mask_token(ts[i]) if m else ts[i] for i, m in enumerate(token_mask)
+        ]
         return masked, token_mask
 
     def _mask_span(self, ts):
@@ -407,6 +440,10 @@ class MolEncTokenizer:
         return padded, masks
 
 
-def load_tokenizer(vocab_path=DEFAULT_VOCAB_PATH, chem_token_start=DEFAULT_CHEM_TOKEN_START, regex=REGEX):
+def load_tokenizer(
+    vocab_path=DEFAULT_VOCAB_PATH,
+    chem_token_start=DEFAULT_CHEM_TOKEN_START,
+    regex=REGEX,
+):
     tokenizer = MolEncTokenizer.from_vocab_file(vocab_path, regex, chem_token_start)
     return tokenizer

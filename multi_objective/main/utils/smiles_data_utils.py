@@ -1,12 +1,12 @@
 import random
-from multiprocessing import Pool
 from collections import UserList, defaultdict
+from multiprocessing import Pool
+
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
 import torch
-from rdkit import rdBase
-from rdkit import Chem
+from matplotlib import pyplot as plt
+from rdkit import Chem, rdBase
 
 
 # https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader
@@ -17,10 +17,10 @@ def set_torch_seed_to_all_gens(_):
 
 
 class SpecialTokens:
-    bos = '<bos>'
-    eos = '<eos>'
-    pad = '<pad>'
-    unk = '<unk>'
+    bos = "<bos>"
+    eos = "<eos>"
+    pad = "<pad>"
+    unk = "<unk>"
 
 
 class CharVocab:
@@ -33,9 +33,13 @@ class CharVocab:
         return cls(chars, *args, **kwargs)
 
     def __init__(self, chars, ss=SpecialTokens):
-        if (ss.bos in chars) or (ss.eos in chars) or \
-                (ss.pad in chars) or (ss.unk in chars):
-            raise ValueError('SpecialTokens in chars')
+        if (
+            (ss.bos in chars)
+            or (ss.eos in chars)
+            or (ss.pad in chars)
+            or (ss.unk in chars)
+        ):
+            raise ValueError("SpecialTokens in chars")
 
         all_syms = sorted(list(chars)) + [ss.bos, ss.eos, ss.pad, ss.unk]
 
@@ -86,13 +90,13 @@ class CharVocab:
 
     def ids2string(self, ids, rem_bos=True, rem_eos=True):
         if len(ids) == 0:
-            return ''
+            return ""
         if rem_bos and ids[0] == self.bos:
             ids = ids[1:]
         if rem_eos and ids[-1] == self.eos:
             ids = ids[:-1]
 
-        string = ''.join([self.id2char(id) for id in ids])
+        string = "".join([self.id2char(id) for id in ids])
 
         return string
 
@@ -104,13 +108,14 @@ class OneHotVocab(CharVocab):
 
 
 def mapper(n_jobs):
-    '''
+    """
     Returns function for map call.
     If n_jobs == 1, will use standard map
     If n_jobs > 1, will use multiprocessing pool
     If n_jobs is a pool object, will return its map function
-    '''
+    """
     if n_jobs == 1:
+
         def _mapper(*args, **kwargs):
             return list(map(*args, **kwargs))
 
@@ -133,7 +138,7 @@ class Logger(UserList):
     def __init__(self, data=None):
         super().__init__()
         self.sdata = defaultdict(list)
-        for step in (data or []):
+        for step in data or []:
             self.append(step)
 
     def __getitem__(self, key):
@@ -168,13 +173,14 @@ class LogPlotter:
         else:
             ax.plot(self.log[name])
 
-        ax.set_ylabel('value')
-        ax.set_xlabel('epoch')
+        ax.set_ylabel("value")
+        ax.set_xlabel("epoch")
         ax.set_title(name)
 
     def grid(self, names, size=7):
-        _, axs = plt.subplots(nrows=len(names) // 2, ncols=2,
-                              figsize=(size * 2, size * (len(names) // 2)))
+        _, axs = plt.subplots(
+            nrows=len(names) // 2, ncols=2, figsize=(size * 2, size * (len(names) // 2))
+        )
 
         for ax, name in zip(axs.flatten(), names):
             self.line(ax, name)
@@ -199,22 +205,22 @@ class CircularBuffer:
 
     def mean(self):
         if self.size > 0:
-            return self.data[:self.size].mean()
+            return self.data[: self.size].mean()
         return 0.0
 
 
 def disable_rdkit_log():
-    rdBase.DisableLog('rdApp.*')
+    rdBase.DisableLog("rdApp.*")
 
 
 def enable_rdkit_log():
-    rdBase.EnableLog('rdApp.*')
+    rdBase.EnableLog("rdApp.*")
 
 
 def get_mol(smiles_or_mol):
-    '''
+    """
     Loads SMILES/molecule into RDKit's object
-    '''
+    """
     if isinstance(smiles_or_mol, str):
         if len(smiles_or_mol) == 0:
             return None
@@ -310,8 +316,4 @@ class StringDataset:
 
 
 def batch_to_device(batch, device):
-    return [
-        x.to(device) if isinstance(x, torch.Tensor) else x
-        for x in batch
-    ]
-
+    return [x.to(device) if isinstance(x, torch.Tensor) else x for x in batch]

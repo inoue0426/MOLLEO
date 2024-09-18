@@ -1,8 +1,10 @@
-import re
-from rdkit import Chem
-import main.molleo.crossover as co, main.molleo.mutate as mu
-from litellm import completion
 import random
+import re
+
+import main.molleo.crossover as co
+import main.molleo.mutate as mu
+from litellm import completion
+from rdkit import Chem
 
 MINIMUM = 1e-10
 

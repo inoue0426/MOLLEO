@@ -2,14 +2,12 @@
 
 import torch
 from rdkit import Chem, RDLogger
+
 from .util import DEFAULT_MAX_SEQ_LEN
 
+
 class DecodeSampler:
-    def __init__(
-        self,
-        tokenizer,
-        max_seq_len=DEFAULT_MAX_SEQ_LEN
-    ):
+    def __init__(self, tokenizer, max_seq_len=DEFAULT_MAX_SEQ_LEN):
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
 
@@ -23,12 +21,13 @@ class DecodeSampler:
 
         RDLogger.DisableLog("rdApp.*")
 
-
-    def decode(self, decode_fn, batch_size, sampling_alg="greedy", device="cpu", **kwargs):
-        """ Sample a molecule from a model by calling the decode function argument
+    def decode(
+        self, decode_fn, batch_size, sampling_alg="greedy", device="cpu", **kwargs
+    ):
+        """Sample a molecule from a model by calling the decode function argument
 
         Args:
-            decode_fn: A function mapping a batched sequence of token identifiers and their associated pad masks 
+            decode_fn: A function mapping a batched sequence of token identifiers and their associated pad masks
                        to a log probability distribution over possible next tokens
             batch_size: The number of elements to pass into the decode function in one batch
             sampling_alg: Algorithm to use for sampling from the model
@@ -48,9 +47,8 @@ class DecodeSampler:
 
         return output
 
-
     def greedy_decode(self, decode_fn, batch_size, device="cpu"):
-        """ Sample molecules from the model using greedy search
+        """Sample molecules from the model using greedy search
 
         Args:
             decode_fn (fn): Function used to apply tokens to model and produce log probability distribution
@@ -62,10 +60,14 @@ class DecodeSampler:
         """
 
         # Create tensors which will be reused
-        token_ids = [self.begin_token_id] + ([self.pad_token_id] * (self.max_seq_len - 1))
+        token_ids = [self.begin_token_id] + (
+            [self.pad_token_id] * (self.max_seq_len - 1)
+        )
         token_ids = [token_ids] * batch_size
         token_ids = torch.tensor(token_ids, device=device).transpose(0, 1)
-        pad_mask = torch.zeros((self.max_seq_len, batch_size), device=device, dtype=torch.bool)
+        pad_mask = torch.zeros(
+            (self.max_seq_len, batch_size), device=device, dtype=torch.bool
+        )
         log_lhs = torch.zeros((batch_size))
 
         # Iteratively apply the tokens to the model and build up the sequence
@@ -82,8 +84,8 @@ class DecodeSampler:
             # Generate next elements in the pad mask. An element is padded if:
             # 1. The previous token is an end token
             # 2. The previous token is a pad token
-            is_end_token = token_ids[i-1, :] == self.end_token_id
-            is_pad_token = token_ids[i-1, :] == self.pad_token_id
+            is_end_token = token_ids[i - 1, :] == self.end_token_id
+            is_pad_token = token_ids[i - 1, :] == self.pad_token_id
             new_pad_mask = torch.logical_or(is_end_token, is_pad_token)
 
             # Break if sampling is complete
@@ -107,9 +109,8 @@ class DecodeSampler:
 
         return mol_strs, log_lhs
 
-
     def beam_decode(self, decode_fn, batch_size, device="cpu", k=5):
-        """ Sample molecules from the model using beam search
+        """Sample molecules from the model using beam search
 
         Samples molecules by iteratively building up the sequence of SMILES characters using beam search.
         Molecules are returned in a 2D list where batch_size is the outer dimension and k is the inner dimension.
@@ -125,10 +126,14 @@ class DecodeSampler:
         """
 
         # Create tensors which will be reused
-        token_ids = [self.begin_token_id] + ([self.pad_token_id] * (self.max_seq_len - 1))
+        token_ids = [self.begin_token_id] + (
+            [self.pad_token_id] * (self.max_seq_len - 1)
+        )
         token_ids = [token_ids] * batch_size
         token_ids = torch.tensor(token_ids, device=device).transpose(0, 1)
-        pad_mask = torch.zeros((self.max_seq_len, batch_size), device=device, dtype=torch.bool)
+        pad_mask = torch.zeros(
+            (self.max_seq_len, batch_size), device=device, dtype=torch.bool
+        )
 
         ts = token_ids[:1, :]
         ms = pad_mask[:1, :]
@@ -139,7 +144,7 @@ class DecodeSampler:
         top_lls, top_idxs = torch.topk(first_lls, k, dim=1)
         top_ids = list(top_idxs.T)
 
-        # Setup tensors for each beam which will be reused 
+        # Setup tensors for each beam which will be reused
         token_ids_list = [token_ids.clone() for _ in range(k)]
         pad_mask_list = [pad_mask.clone() for _ in range(k)]
         lls_list = list(top_lls.cpu().T)
@@ -149,12 +154,18 @@ class DecodeSampler:
             pad_mask_list[beam_idx][1, :] = 0
 
         for i in range(2, self.max_seq_len):
-            complete = self._update_beams_(i, decode_fn, token_ids_list, pad_mask_list, lls_list)
+            complete = self._update_beams_(
+                i, decode_fn, token_ids_list, pad_mask_list, lls_list
+            )
             if complete:
                 break
 
-        tokens_list = [token_ids.transpose(0, 1).tolist() for token_ids in token_ids_list]
-        tokens_list = [self.tokenizer.convert_ids_to_tokens(tokens) for tokens in tokens_list]
+        tokens_list = [
+            token_ids.transpose(0, 1).tolist() for token_ids in token_ids_list
+        ]
+        tokens_list = [
+            self.tokenizer.convert_ids_to_tokens(tokens) for tokens in tokens_list
+        ]
         mol_strs_list = [self.tokenizer.detokenize(tokens) for tokens in tokens_list]
         log_lhs_list = [log_lhs.tolist() for log_lhs in lls_list]
 
@@ -165,9 +176,8 @@ class DecodeSampler:
 
         return sorted_mols, sorted_lls
 
-
     def _update_beams_(self, i, decode_fn, token_ids_list, pad_mask_list, lls_list):
-        """ Update beam tokens and pad mask in-place using a single decode step
+        """Update beam tokens and pad mask in-place using a single decode step
 
         Updates token ids and pad mask in-place by producing the probability distribution over next tokens
         and choosing the top k (number of beams) log likelihoods to choose the next tokens.
@@ -185,7 +195,7 @@ class DecodeSampler:
         """
 
         assert len(token_ids_list) == len(pad_mask_list) == len(lls_list)
-        
+
         num_beams = len(token_ids_list)
 
         ts = [token_ids[:i, :] for token_ids in token_ids_list]
@@ -193,7 +203,9 @@ class DecodeSampler:
 
         # Apply current seqs to model to get a distribution over next tokens
         # new_lls is a tensor of shape [batch_size, vocab_size * num_beams]
-        new_lls = [self._beam_step(decode_fn, t, m, lls) for t, m, lls in zip(ts, ms, lls_list)]
+        new_lls = [
+            self._beam_step(decode_fn, t, m, lls) for t, m, lls in zip(ts, ms, lls_list)
+        ]
         _, vocab_size = new_lls[0].shape
         new_lls = torch.cat(new_lls, dim=1)
 
@@ -209,16 +221,21 @@ class DecodeSampler:
         new_lls_list = []
 
         # Set the sampled tokens, pad masks and log likelihoods for each of the new beams
-        for new_beam_idx, (new_ids, beam_idxs, lls) in enumerate(zip(new_ids_list, beam_idxs_list, top_lls)):
+        for new_beam_idx, (new_ids, beam_idxs, lls) in enumerate(
+            zip(new_ids_list, beam_idxs_list, top_lls)
+        ):
             # Get the previous sequences corresponding to the new beams
-            token_ids = [token_ids_list[beam_idx][:, b_idx] for b_idx, beam_idx in enumerate(beam_idxs)]
+            token_ids = [
+                token_ids_list[beam_idx][:, b_idx]
+                for b_idx, beam_idx in enumerate(beam_idxs)
+            ]
             token_ids = torch.stack(token_ids).transpose(0, 1)
 
             # Generate next elements in the pad mask. An element is padded if:
             # 1. The previous token is an end token
             # 2. The previous token is a pad token
-            is_end_token = token_ids[i-1, :] == self.end_token_id
-            is_pad_token = token_ids[i-1, :] == self.pad_token_id
+            is_end_token = token_ids[i - 1, :] == self.end_token_id
+            is_pad_token = token_ids[i - 1, :] == self.pad_token_id
             new_pad_mask = torch.logical_or(is_end_token, is_pad_token)
             beam_complete.append(new_pad_mask.sum().item() == new_pad_mask.numel())
 
@@ -231,7 +248,10 @@ class DecodeSampler:
             token_ids[i, :] = new_ids
 
             # Generate full pad mask sequence for new token sequence
-            pad_mask = [pad_mask_list[beam_idx][:, b_idx] for b_idx, beam_idx in enumerate(beam_idxs)]
+            pad_mask = [
+                pad_mask_list[beam_idx][:, b_idx]
+                for b_idx, beam_idx in enumerate(beam_idxs)
+            ]
             pad_mask = torch.stack(pad_mask).transpose(0, 1)
             pad_mask[i, :] = new_pad_mask
 
@@ -244,7 +264,9 @@ class DecodeSampler:
 
         # Update all tokens, pad masks and lls
         if not complete:
-            for beam_idx, (ts, pm, lls) in enumerate(zip(new_ts_list, new_pm_list, new_lls_list)):
+            for beam_idx, (ts, pm, lls) in enumerate(
+                zip(new_ts_list, new_pm_list, new_lls_list)
+            ):
                 token_ids_list[beam_idx] = ts
                 pad_mask_list[beam_idx] = pm
                 lls_list[beam_idx] = lls
@@ -252,7 +274,7 @@ class DecodeSampler:
         return complete
 
     def _beam_step(self, decode_fn, tokens, mask, lls):
-        """ Apply tokens to model to produce the log likelihoods for the full sequence
+        """Apply tokens to model to produce the log likelihoods for the full sequence
 
         A single iteration of decode is applied to the model to produce the next tokens in the sequences
         and the log likelihoods for the entire sequences (including the next token)
@@ -271,7 +293,7 @@ class DecodeSampler:
         output_dist = decode_fn(tokens, mask)
         next_token_lls = output_dist[-1, :, :].cpu()
 
-        # Create a vector from which only a pad token can be sampled 
+        # Create a vector from which only a pad token can be sampled
         # And use this vector in the output for sequences which are complete
         _, vocab_size = tuple(next_token_lls.shape)
         complete_seq_ll = torch.ones((1, vocab_size)) * self.bad_token_ll
@@ -287,7 +309,7 @@ class DecodeSampler:
 
     @staticmethod
     def _transpose_list(l):
-        """ Transpose 2D list so that inner dimension is first
+        """Transpose 2D list so that inner dimension is first
 
         Args:
             l (List[Any]): List to be transposed
@@ -308,7 +330,7 @@ class DecodeSampler:
 
     @staticmethod
     def _sort_beams(mol_strs, log_lhs):
-        """ Return mols sorted by their log likelihood
+        """Return mols sorted by their log likelihood
 
         Args:
             mol_strs (List[List[str]]): SMILES encoding of molecules
@@ -333,7 +355,7 @@ class DecodeSampler:
 
     @staticmethod
     def calc_sampling_metrics(sampled_smiles, target_smiles):
-        """ Calculate sampling metrics for the model
+        """Calculate sampling metrics for the model
 
         If sampled_smiles is a List[List[str]] then the following metrics for beam search are calculated (up to the
         maximum given by the number of elements in the inner lists):
@@ -350,7 +372,7 @@ class DecodeSampler:
 
         Args:
             sampled_smiles: SMILES strings produced by decode function,
-            target_smiles: target molecules as canonicalised SMILES strings 
+            target_smiles: target molecules as canonicalised SMILES strings
 
         Returns:
             dict containing results
@@ -367,7 +389,9 @@ class DecodeSampler:
         elif data_type == list:
             results = DecodeSampler._calc_beam_metrics(sampled_smiles, target_smiles)
         else:
-            raise TypeError(f"Elements of sampled_smiles must be either a str or a list, got {data_type}")
+            raise TypeError(
+                f"Elements of sampled_smiles must be either a str or a list, got {data_type}"
+            )
 
         return results
 
@@ -376,10 +400,14 @@ class DecodeSampler:
         sampled_mols = [Chem.MolFromSmiles(smi) for smi in sampled_smiles]
         invalid = [mol is None for mol in sampled_mols]
 
-        canon_smiles = ["Unknown" if mol is None else Chem.MolToSmiles(mol) for mol in sampled_mols]
+        canon_smiles = [
+            "Unknown" if mol is None else Chem.MolToSmiles(mol) for mol in sampled_mols
+        ]
         target_mols = [Chem.MolFromSmiles(smi) for smi in target_smiles]
         canon_target_smiles = [Chem.MolToSmiles(mol) for mol in target_mols]
-        correct_smiles = [canon_target_smiles[idx] == smi for idx, smi in enumerate(canon_smiles)]
+        correct_smiles = [
+            canon_target_smiles[idx] == smi for idx, smi in enumerate(canon_smiles)
+        ]
 
         num_correct = sum(correct_smiles)
         total = len(correct_smiles)
@@ -388,10 +416,7 @@ class DecodeSampler:
         accuracy = num_correct / total
 
         # Todo: need to move accuracy and perc_invalid to cuda for reducing later
-        metrics = {
-            "accuracy": accuracy,
-            "invalid": perc_invalid
-        }
+        metrics = {"accuracy": accuracy, "invalid": perc_invalid}
 
         return metrics
 
@@ -402,7 +427,7 @@ class DecodeSampler:
 
         metrics = {
             "top_1_accuracy": top_1_results["accuracy"],
-            "invalid": top_1_results["invalid"]
+            "invalid": top_1_results["invalid"],
         }
 
         ks = [2, 3, 5, 10, 20, 50]
@@ -415,8 +440,13 @@ class DecodeSampler:
             for batch_idx, mols in enumerate(sampled_smiles):
                 samples = mols[:num_samples]
                 samples_mols = [Chem.MolFromSmiles(smi) for smi in samples]
-                samples_smiles = ["Unknown" if mol is None else Chem.MolToSmiles(mol) for mol in samples_mols]
-                correct_smiles = [smi == target_smiles[batch_idx] for smi in samples_smiles]
+                samples_smiles = [
+                    "Unknown" if mol is None else Chem.MolToSmiles(mol)
+                    for mol in samples_mols
+                ]
+                correct_smiles = [
+                    smi == target_smiles[batch_idx] for smi in samples_smiles
+                ]
                 is_correct = sum(correct_smiles) >= 1
                 top_k_correct.append(is_correct)
 

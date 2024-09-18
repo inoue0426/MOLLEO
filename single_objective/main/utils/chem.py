@@ -1,10 +1,11 @@
-from rdkit import Chem
 import os
 import sys
 import time
-from typing import List, Any, Optional, Set, Iterable
+from typing import Any, Iterable, List, Optional, Set
 from urllib.request import urlretrieve
+
 import numpy as np
+from rdkit import Chem
 from tqdm import tqdm
 
 
@@ -27,6 +28,7 @@ def remove_duplicates(list_with_duplicates):
 
     return unique_list
 
+
 def is_valid(smiles: str):
     """
     Verifies whether a SMILES string corresponds to a valid molecule.
@@ -38,7 +40,7 @@ def is_valid(smiles: str):
 
     mol = Chem.MolFromSmiles(smiles)
 
-    return smiles != '' and mol is not None and mol.GetNumAtoms() > 0
+    return smiles != "" and mol is not None and mol.GetNumAtoms() > 0
 
 
 def canonicalize(smiles: str, include_stereocenters=True) -> Optional[str]:
@@ -66,7 +68,9 @@ def canonicalize(smiles: str, include_stereocenters=True) -> Optional[str]:
         return None
 
 
-def canonicalize_list(smiles_list: Iterable[str], include_stereocenters=True) -> List[str]:
+def canonicalize_list(
+    smiles_list: Iterable[str], include_stereocenters=True
+) -> List[str]:
     """
     Canonicalize a list of smiles. Filters out repetitions and removes corrupted molecules.
     Args:
@@ -76,7 +80,9 @@ def canonicalize_list(smiles_list: Iterable[str], include_stereocenters=True) ->
         The canonicalized and filtered input smiles.
     """
 
-    canonicalized_smiles = [canonicalize(smiles, include_stereocenters) for smiles in smiles_list]
+    canonicalized_smiles = [
+        canonicalize(smiles, include_stereocenters) for smiles in smiles_list
+    ]
 
     # Remove None elements
     canonicalized_smiles = [s for s in canonicalized_smiles if s is not None]

@@ -1,12 +1,14 @@
-from megatron.module import MegatronModule
-from apex.normalization import FusedLayerNorm
-from megatron import mpu
-from torch.nn import init
-import torch.nn as nn
-import torch.nn.functional as F
-import torch
 import math
 from functools import partial
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from apex.normalization import FusedLayerNorm
+from megatron import mpu
+from megatron.module import MegatronModule
+from torch.nn import init
+
 from .tokenizer import load_tokenizer
 from .util import DEFAULT_CHEM_TOKEN_START, DEFAULT_VOCAB_PATH, REGEX
 
@@ -21,7 +23,7 @@ class MultiheadAttention(MegatronModule):
         bias=True,
         cross_attention=False,
         init_method=init.xavier_uniform_,
-        ):
+    ):
 
         super(MultiheadAttention, self).__init__()
 
@@ -31,30 +33,44 @@ class MultiheadAttention(MegatronModule):
         self.bias = bias
         self.cross_attention = cross_attention
         self.head_dim = self.embed_dim // self.num_heads
-        self.scaling = self.head_dim ** -0.5
+        self.scaling = self.head_dim**-0.5
         self.init_method = init_method
         self.skip_bias = not bias
 
         # Self-Attention is Column Parallelized
-        self.query_key_value = mpu.ColumnParallelLinear(self.embed_dim,
-                3 * self.embed_dim, gather_output=True,
-                init_method=self.init_method,
-                skip_bias_add=self.skip_bias)
+        self.query_key_value = mpu.ColumnParallelLinear(
+            self.embed_dim,
+            3 * self.embed_dim,
+            gather_output=True,
+            init_method=self.init_method,
+            skip_bias_add=self.skip_bias,
+        )
 
         # Cross-Attention is Row and Column Parallelized
-        self.q_proj = mpu.RowParallelLinear(self.embed_dim,
-                self.embed_dim, input_is_parallel=False,
-                init_method=self.init_method, bias=bias,
-                skip_bias_add=self.skip_bias)
-        self.key_value = mpu.ColumnParallelLinear(self.embed_dim, 2
-                * self.embed_dim, gather_output=True,
-                init_method=self.init_method,
-                skip_bias_add=self.skip_bias)
+        self.q_proj = mpu.RowParallelLinear(
+            self.embed_dim,
+            self.embed_dim,
+            input_is_parallel=False,
+            init_method=self.init_method,
+            bias=bias,
+            skip_bias_add=self.skip_bias,
+        )
+        self.key_value = mpu.ColumnParallelLinear(
+            self.embed_dim,
+            2 * self.embed_dim,
+            gather_output=True,
+            init_method=self.init_method,
+            skip_bias_add=self.skip_bias,
+        )
 
         # Final projection is Row Parallelized
-        self.out_proj = mpu.RowParallelLinear(self.embed_dim,
-                self.embed_dim, input_is_parallel=False,
-                init_method=self.init_method, bias=bias)
+        self.out_proj = mpu.RowParallelLinear(
+            self.embed_dim,
+            self.embed_dim,
+            input_is_parallel=False,
+            init_method=self.init_method,
+            bias=bias,
+        )
 
     def forward(
         self,
@@ -63,7 +79,7 @@ class MultiheadAttention(MegatronModule):
         value=None,
         key_padding_mask=None,
         attn_mask=None,
-        ):
+    ):
         """Input shape: Time x Batch x Channel
 
         Args:
@@ -88,8 +104,9 @@ class MultiheadAttention(MegatronModule):
         else:
             q, _ = self.q_proj(query)
             if key is None:
-                assert value is None, \
-                    'Cross attention mode: since key is None, value must also be None.'
+                assert (
+                    value is None
+                ), "Cross attention mode: since key is None, value must also be None."
                 k = v = None
             else:
                 (k_v, bias) = self.key_value(key)
@@ -98,20 +115,24 @@ class MultiheadAttention(MegatronModule):
         # Scale query and reshape
         q = q.contiguous()
         q *= self.scaling
-        q = q.view(tgt_len, bsz * self.num_heads,
-                   self.head_dim).transpose(0, 1)
+        q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if k is not None:
-            k = k.contiguous().view(-1, bsz * self.num_heads,
-                                    self.head_dim).transpose(0, 1)
+            k = (
+                k.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
         if v is not None:
-            v = v.contiguous().view(-1, bsz * self.num_heads,
-                                    self.head_dim).transpose(0, 1)
+            v = (
+                v.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
 
         # Compute attention scores
         src_len = k.size(1)
         attn_weights = torch.bmm(q, k.transpose(1, 2))
-        assert list(attn_weights.size()) == [bsz * self.num_heads,
-                tgt_len, src_len]
+        assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
 
         # Apply causal attention mask
         if attn_mask is not None:
@@ -120,13 +141,11 @@ class MultiheadAttention(MegatronModule):
 
         # Apply padding mask
         if key_padding_mask is not None:
-            attn_weights = attn_weights.view(bsz, self.num_heads,
-                    tgt_len, src_len)
-            attn_weights = \
-                attn_weights.masked_fill(key_padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool),
-                    float('-inf'))
-            attn_weights = attn_weights.view(bsz * self.num_heads,
-                    tgt_len, src_len)
+            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights.masked_fill(
+                key_padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool), float("-inf")
+            )
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         # Compute attention probabilities
         attn_weights = F.softmax(attn_weights, dim=-1)
@@ -134,18 +153,14 @@ class MultiheadAttention(MegatronModule):
 
         # Compute context and output projection
         attn = torch.bmm(attn_probs, v)
-        assert list(attn.size()) == [bsz * self.num_heads, tgt_len,
-                self.head_dim]
+        assert list(attn.size()) == [bsz * self.num_heads, tgt_len, self.head_dim]
         if attn.size(1) == 1:  # a single decoder step (sequence length == 1)
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
         else:
-            attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz,
-                    embed_dim)
+            attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
         (attn, bias) = self.out_proj(attn)
-        attn_output_weights = attn_probs.view(bsz, self.num_heads,
-                tgt_len, src_len)
-        attn_output_weights = attn_output_weights.sum(dim=1) \
-            / self.num_heads
+        attn_output_weights = attn_probs.view(bsz, self.num_heads, tgt_len, src_len)
+        attn_output_weights = attn_output_weights.sum(dim=1) / self.num_heads
         return (attn, attn_output_weights)
 
 
@@ -158,7 +173,7 @@ class EncoderLayer(MegatronModule):
         dropout=0.0,
         bias=True,
         init_method=init.xavier_uniform_,
-        ):
+    ):
 
         super(EncoderLayer, self).__init__()
         self.self_attn = MultiheadAttention(
@@ -168,17 +183,25 @@ class EncoderLayer(MegatronModule):
             bias=bias,
             cross_attention=False,
             init_method=init_method,
-            )
+        )
         self.self_attn_layer_norm = FusedLayerNorm(embed_dim)
         self.attn_dropout = nn.Dropout(p=dropout)
         self.activation_fn = F.gelu
         self.activation_dropout = nn.Dropout(p=dropout)
-        self.fc1 = mpu.ColumnParallelLinear(embed_dim, 4
-                * embed_dim, gather_output=False,
-                init_method=init_method, skip_bias_add=False)
-        self.fc2 = mpu.RowParallelLinear(4 * embed_dim,
-                embed_dim, input_is_parallel=True,
-                init_method=init_method, skip_bias_add=False)
+        self.fc1 = mpu.ColumnParallelLinear(
+            embed_dim,
+            4 * embed_dim,
+            gather_output=False,
+            init_method=init_method,
+            skip_bias_add=False,
+        )
+        self.fc2 = mpu.RowParallelLinear(
+            4 * embed_dim,
+            embed_dim,
+            input_is_parallel=True,
+            init_method=init_method,
+            skip_bias_add=False,
+        )
         self.final_layer_norm = FusedLayerNorm(embed_dim)
 
     def forward(
@@ -186,7 +209,7 @@ class EncoderLayer(MegatronModule):
         x,
         encoder_padding_mask=None,
         attn_mask=None,
-        ):
+    ):
         """
         Args:
             x: input to the layer of shape (seq_len, batch, embed_dim)
@@ -200,13 +223,16 @@ class EncoderLayer(MegatronModule):
         """
 
         if attn_mask is not None:
-            attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool),
-                    -1e8)
+            attn_mask = attn_mask.masked_fill(attn_mask.to(torch.bool), -1e8)
         residual = x
         x = self.self_attn_layer_norm(x)
-        (x, weights) = self.self_attn(query=x, key=x, value=x,
-                key_padding_mask=encoder_padding_mask,
-                attn_mask=attn_mask)
+        (x, weights) = self.self_attn(
+            query=x,
+            key=x,
+            value=x,
+            key_padding_mask=encoder_padding_mask,
+            attn_mask=attn_mask,
+        )
         x = self.attn_dropout(x)
         x = x + residual
         residual = x
@@ -229,7 +255,7 @@ class DecoderLayer(MegatronModule):
         dropout=0.0,
         bias=True,
         init_method=init.xavier_uniform_,
-        ):
+    ):
 
         super(DecoderLayer, self).__init__()
         self.self_attn = MultiheadAttention(
@@ -239,7 +265,7 @@ class DecoderLayer(MegatronModule):
             bias=bias,
             cross_attention=False,
             init_method=init_method,
-            )
+        )
         self.self_attn_layer_norm = FusedLayerNorm(embed_dim)
         self.encoder_attn = MultiheadAttention(
             embed_dim,
@@ -248,17 +274,25 @@ class DecoderLayer(MegatronModule):
             bias=bias,
             cross_attention=True,
             init_method=init_method,
-            )
+        )
         self.encoder_attn_layer_norm = FusedLayerNorm(embed_dim)
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = F.gelu
         self.activation_dropout = nn.Dropout(p=dropout)
-        self.fc1 = mpu.ColumnParallelLinear(embed_dim, 4
-                * embed_dim, gather_output=False,
-                init_method=init_method, skip_bias_add=False)
-        self.fc2 = mpu.RowParallelLinear(4 * embed_dim,
-                embed_dim, input_is_parallel=True,
-                init_method=init_method, skip_bias_add=False)
+        self.fc1 = mpu.ColumnParallelLinear(
+            embed_dim,
+            4 * embed_dim,
+            gather_output=False,
+            init_method=init_method,
+            skip_bias_add=False,
+        )
+        self.fc2 = mpu.RowParallelLinear(
+            4 * embed_dim,
+            embed_dim,
+            input_is_parallel=True,
+            init_method=init_method,
+            skip_bias_add=False,
+        )
         self.final_layer_norm = FusedLayerNorm(embed_dim)
 
     def forward(
@@ -268,7 +302,7 @@ class DecoderLayer(MegatronModule):
         encoder_padding_mask=None,
         self_attn_mask=None,
         self_attn_padding_mask=None,
-        ):
+    ):
         """
         Args:
             x: input to decoder layer of shape (seq_len, batch, embed_dim)
@@ -289,9 +323,13 @@ class DecoderLayer(MegatronModule):
 
         # Self-Attention block
 
-        (x, weights) = self.self_attn(query=x, key=x, value=x,
-                key_padding_mask=self_attn_padding_mask,
-                attn_mask=self_attn_mask)
+        (x, weights) = self.self_attn(
+            query=x,
+            key=x,
+            value=x,
+            key_padding_mask=self_attn_padding_mask,
+            attn_mask=self_attn_mask,
+        )
         x = self.dropout(x)
         x = x + residual
 
@@ -299,9 +337,12 @@ class DecoderLayer(MegatronModule):
         if encoder_out is not None:
             residual = x
             x = self.encoder_attn_layer_norm(x)
-            (x, attn) = self.encoder_attn(query=x, key=encoder_out,
-                    value=encoder_out,
-                    key_padding_mask=encoder_padding_mask)
+            (x, attn) = self.encoder_attn(
+                query=x,
+                key=encoder_out,
+                value=encoder_out,
+                key_padding_mask=encoder_padding_mask,
+            )
             x = self.dropout(x)
             x = x + residual
         residual = x
@@ -327,7 +368,7 @@ class ParallelTransformerEncoder(MegatronModule):
         dropout=0.0,
         bias=True,
         init_method=init.xavier_uniform_,
-        ):
+    ):
 
         super(ParallelTransformerEncoder, self).__init__()
         self.layers = nn.ModuleList([])
@@ -337,14 +378,17 @@ class ParallelTransformerEncoder(MegatronModule):
         self.attn_dropout = dropout
         self.bias = bias
         self.init_method = init_method
-        self.layers.extend([self.build_encoder_layer() for i in
-                           range(self.num_layers)])
+        self.layers.extend([self.build_encoder_layer() for i in range(self.num_layers)])
         self.norm = FusedLayerNorm(self.embed_dim)
 
     def build_encoder_layer(self):
-        layer = EncoderLayer(self.embed_dim, self.num_heads,
-                             dropout=self.attn_dropout, bias=self.bias,
-                             init_method=self.init_method)
+        layer = EncoderLayer(
+            self.embed_dim,
+            self.num_heads,
+            dropout=self.attn_dropout,
+            bias=self.bias,
+            init_method=self.init_method,
+        )
         return layer
 
     def forward(
@@ -352,7 +396,7 @@ class ParallelTransformerEncoder(MegatronModule):
         src,
         mask=None,
         src_key_padding_mask=None,
-        ):
+    ):
         """Pass the input through the encoder layers in turn.
         Args:
             src: the sequence to the encoder (required).
@@ -364,8 +408,9 @@ class ParallelTransformerEncoder(MegatronModule):
 
         output = src
         for mod in self.layers:
-            output = mod(output, attn_mask=mask,
-                         encoder_padding_mask=src_key_padding_mask)
+            output = mod(
+                output, attn_mask=mask, encoder_padding_mask=src_key_padding_mask
+            )
         output = self.norm(output)
         return output
 
@@ -380,7 +425,7 @@ class ParallelTransformerDecoder(MegatronModule):
         dropout=0.0,
         bias=True,
         init_method=init.xavier_uniform_,
-        ):
+    ):
 
         super(ParallelTransformerDecoder, self).__init__()
         self.layers = nn.ModuleList([])
@@ -390,14 +435,17 @@ class ParallelTransformerDecoder(MegatronModule):
         self.attn_dropout = dropout
         self.bias = bias
         self.init_method = init_method
-        self.layers.extend([self.build_decoder_layer() for i in
-                           range(self.num_layers)])
+        self.layers.extend([self.build_decoder_layer() for i in range(self.num_layers)])
         self.norm = FusedLayerNorm(self.embed_dim)
 
     def build_decoder_layer(self):
-        layer = DecoderLayer(self.embed_dim, self.num_heads,
-                             dropout=self.attn_dropout, bias=self.bias,
-                             init_method=self.init_method)
+        layer = DecoderLayer(
+            self.embed_dim,
+            self.num_heads,
+            dropout=self.attn_dropout,
+            bias=self.bias,
+            init_method=self.init_method,
+        )
         return layer
 
     def forward(
@@ -407,7 +455,7 @@ class ParallelTransformerDecoder(MegatronModule):
         tgt_mask=None,
         tgt_key_padding_mask=None,
         memory_key_padding_mask=None,
-        ):
+    ):
         """Pass the inputs (and mask) through the decoder layer in turn.
         Args:
             tgt: the sequence to the decoder (required).
@@ -421,10 +469,13 @@ class ParallelTransformerDecoder(MegatronModule):
 
         output = tgt
         for mod in self.layers:
-            output = mod(output, encoder_out=memory,
-                         encoder_padding_mask=memory_key_padding_mask,
-                         self_attn_mask=tgt_mask,
-                         self_attn_padding_mask=tgt_key_padding_mask)
+            output = mod(
+                output,
+                encoder_out=memory,
+                encoder_padding_mask=memory_key_padding_mask,
+                self_attn_mask=tgt_mask,
+                self_attn_padding_mask=tgt_key_padding_mask,
+            )
         output = self.norm(output)
         return output
 
@@ -442,13 +493,13 @@ class MegatronBART(MegatronModule):
         d_feedforward,
         max_seq_len,
         dropout=0.0,
-        ):
+    ):
 
         super().__init__()
 
         self.sampler = decode_sampler
         self.pad_token_idx = pad_token_idx
-        self.val_sampling_alg = 'greedy'
+        self.val_sampling_alg = "greedy"
         self.num_beams = 5
         self.vocab_size = vocab_size
         self.d_model = d_model
@@ -469,7 +520,7 @@ class MegatronBART(MegatronModule):
             self.dropout,
             bias=True,
             init_method=init_method,
-            )
+        )
         self.decoder = ParallelTransformerDecoder(
             self.num_layers,
             self.d_model,
@@ -477,21 +528,24 @@ class MegatronBART(MegatronModule):
             self.dropout,
             bias=True,
             init_method=init_method,
-            )
-        self.token_fc = mpu.RowParallelLinear(d_model, vocab_size,
-                input_is_parallel=False, init_method=init_method,
-                skip_bias_add=False)
-        self.loss_fn = nn.CrossEntropyLoss(reduction='none',
-                ignore_index=pad_token_idx)
+        )
+        self.token_fc = mpu.RowParallelLinear(
+            d_model,
+            vocab_size,
+            input_is_parallel=False,
+            init_method=init_method,
+            skip_bias_add=False,
+        )
+        self.loss_fn = nn.CrossEntropyLoss(reduction="none", ignore_index=pad_token_idx)
         self.log_softmax = nn.LogSoftmax(dim=2)
         self._init_params(init_method)
-        self.register_buffer('pos_emb', self._positional_embs())
+        self.register_buffer("pos_emb", self._positional_embs())
 
     def forward(self, x):
-        """ Apply SMILES strings to model
+        """Apply SMILES strings to model
 
         The dictionary returned will be passed to other functions, so its contents are fairly flexible,
-        except that it must contain the key "token_output" which is the output of the model 
+        except that it must contain the key "token_output" which is the output of the model
         (possibly after any fully connected layers) for each token.
 
         Arg:
@@ -506,33 +560,35 @@ class MegatronBART(MegatronModule):
             Output from model (dict containing key "token_output" and "model_output")
         """
 
-        encoder_input = x['encoder_input']
-        decoder_input = x['decoder_input']
-        encoder_pad_mask = x['encoder_pad_mask'].transpose(0, 1)
-        decoder_pad_mask = x['decoder_pad_mask'].transpose(0, 1)
+        encoder_input = x["encoder_input"]
+        decoder_input = x["decoder_input"]
+        encoder_pad_mask = x["encoder_pad_mask"].transpose(0, 1)
+        decoder_pad_mask = x["decoder_pad_mask"].transpose(0, 1)
 
         encoder_embs = self._construct_input(encoder_input)
         decoder_embs = self._construct_input(decoder_input)
 
         (seq_len, _, _) = tuple(decoder_embs.size())
-        tgt_mask = \
-            self._generate_square_subsequent_mask(seq_len).to(decoder_embs.device)
+        tgt_mask = self._generate_square_subsequent_mask(seq_len).to(
+            decoder_embs.device
+        )
 
-        memory = self.encoder(encoder_embs,
-                              src_key_padding_mask=encoder_pad_mask)
-        model_output = self.decoder(decoder_embs, memory,
-                                    tgt_mask=tgt_mask,
-                                    tgt_key_padding_mask=decoder_pad_mask,
-                                    memory_key_padding_mask=encoder_pad_mask.clone())
+        memory = self.encoder(encoder_embs, src_key_padding_mask=encoder_pad_mask)
+        model_output = self.decoder(
+            decoder_embs,
+            memory,
+            tgt_mask=tgt_mask,
+            tgt_key_padding_mask=decoder_pad_mask,
+            memory_key_padding_mask=encoder_pad_mask.clone(),
+        )
 
         token_output, _ = self.token_fc(model_output)
-        output = {'model_output': model_output,
-                  'token_output': token_output}
+        output = {"model_output": model_output, "token_output": token_output}
 
         return output
 
     def encode(self, batch):
-        """ Construct the memory embedding for an encoder input
+        """Construct the memory embedding for an encoder input
 
         Args:
             batch (dict {
@@ -544,15 +600,14 @@ class MegatronBART(MegatronModule):
             encoder memory (Tensor of shape (seq_len, batch_size, d_model))
         """
 
-        encoder_input = batch['encoder_input']
-        encoder_pad_mask = batch['encoder_pad_mask'].transpose(0, 1)
+        encoder_input = batch["encoder_input"]
+        encoder_pad_mask = batch["encoder_pad_mask"].transpose(0, 1)
         encoder_embs = self._construct_input(encoder_input)
-        model_output = self.encoder(encoder_embs,
-                                    src_key_padding_mask=encoder_pad_mask)
+        model_output = self.encoder(encoder_embs, src_key_padding_mask=encoder_pad_mask)
         return model_output
 
     def decode(self, batch):
-        """ Construct an output from a given decoder input
+        """Construct an output from a given decoder input
 
         Args:
             batch (dict {
@@ -563,34 +618,42 @@ class MegatronBART(MegatronModule):
             })
         """
 
-        decoder_input = batch['decoder_input']
-        decoder_pad_mask = batch['decoder_pad_mask'].transpose(0, 1)
-        memory_input = batch['memory_input']
-        memory_pad_mask = batch['memory_pad_mask'].transpose(0, 1)
+        decoder_input = batch["decoder_input"]
+        decoder_pad_mask = batch["decoder_pad_mask"].transpose(0, 1)
+        memory_input = batch["memory_input"]
+        memory_pad_mask = batch["memory_pad_mask"].transpose(0, 1)
 
         decoder_embs = self._construct_input(decoder_input)
 
         (seq_len, _, _) = tuple(decoder_embs.size())
-        tgt_mask = \
-            self._generate_square_subsequent_mask(seq_len).to(decoder_embs.device)
+        tgt_mask = self._generate_square_subsequent_mask(seq_len).to(
+            decoder_embs.device
+        )
 
-        model_output = self.decoder(decoder_embs, memory_input,
-                                    tgt_key_padding_mask=decoder_pad_mask,
-                                    memory_key_padding_mask=memory_pad_mask,
-                                    tgt_mask=tgt_mask)
-        token_output, _  = self.token_fc(model_output)
+        model_output = self.decoder(
+            decoder_embs,
+            memory_input,
+            tgt_key_padding_mask=decoder_pad_mask,
+            memory_key_padding_mask=memory_pad_mask,
+            tgt_mask=tgt_mask,
+        )
+        token_output, _ = self.token_fc(model_output)
         token_probs = self.log_softmax(token_output)
         return token_probs
 
     def validation_step(self, batch, batch_idx=None):
         self.eval()
         # TODO: This can be further optimized
-        tokenizer = load_tokenizer(vocab_path=DEFAULT_VOCAB_PATH, chem_token_start=DEFAULT_CHEM_TOKEN_START, regex=REGEX)
+        tokenizer = load_tokenizer(
+            vocab_path=DEFAULT_VOCAB_PATH,
+            chem_token_start=DEFAULT_CHEM_TOKEN_START,
+            regex=REGEX,
+        )
 
         with torch.no_grad():
             model_output = self.forward(batch)
-            #target_smiles = batch['target_smiles']
-            token_ids = batch['target']
+            # target_smiles = batch['target_smiles']
+            token_ids = batch["target"]
             tokens = token_ids.transpose(0, 1).tolist()
             tokens = tokenizer.convert_ids_to_tokens(tokens)
             target_smiles = tokenizer.detokenize(tokens)
@@ -598,24 +661,24 @@ class MegatronBART(MegatronModule):
             loss = self._calc_loss(batch, model_output)
             token_acc = self._calc_char_acc(batch, model_output)
             perplexity = self._calc_perplexity(batch, model_output)
-            (mol_strs, log_lhs) = self.sample_molecules(batch,
-                    sampling_alg=self.val_sampling_alg)
-            metrics = self.sampler.calc_sampling_metrics(mol_strs,
-                    target_smiles)
+            (mol_strs, log_lhs) = self.sample_molecules(
+                batch, sampling_alg=self.val_sampling_alg
+            )
+            metrics = self.sampler.calc_sampling_metrics(mol_strs, target_smiles)
 
         self.train()
 
         val_outputs = {
-            'val_loss': loss.item(),
-            'val_token_acc': token_acc,
-            'val_perplexity': perplexity,
-            'val_molecular_accuracy': metrics['accuracy'],
-            'val_invalid_smiles': metrics['invalid'],
-            }
+            "val_loss": loss.item(),
+            "val_token_acc": token_acc,
+            "val_perplexity": perplexity,
+            "val_molecular_accuracy": metrics["accuracy"],
+            "val_invalid_smiles": metrics["invalid"],
+        }
         return val_outputs
 
     def _calc_loss(self, batch_input, model_output):
-        """ Calculate the loss for the model
+        """Calculate the loss for the model
 
         Args:
             batch_input (dict): Input given to model,
@@ -625,11 +688,10 @@ class MegatronBART(MegatronModule):
             loss (singleton tensor),
         """
 
-        tokens = batch_input['target']
-        pad_mask = batch_input['target_pad_mask']
-        token_output = model_output['token_output']
-        token_mask_loss = self._calc_mask_loss(token_output, tokens,
-                pad_mask)
+        tokens = batch_input["target"]
+        pad_mask = batch_input["target_pad_mask"]
+        token_output = model_output["token_output"]
+        token_mask_loss = self._calc_mask_loss(token_output, tokens, pad_mask)
         return token_mask_loss
 
     def _calc_mask_loss(
@@ -637,8 +699,8 @@ class MegatronBART(MegatronModule):
         token_output,
         target,
         target_mask,
-        ):
-        """ Calculate the loss for the token prediction task
+    ):
+        """Calculate the loss for the token prediction task
 
         Args:
             token_output (Tensor of shape (seq_len, batch_size, vocab_size)): token output from transformer
@@ -650,23 +712,21 @@ class MegatronBART(MegatronModule):
         """
 
         (seq_len, batch_size) = tuple(target.size())
-        token_pred = token_output.reshape((seq_len * batch_size,
-                -1)).float()
-        loss = self.loss_fn(token_pred,
-                            target.reshape(-1)).reshape((seq_len,
-                batch_size))
+        token_pred = token_output.reshape((seq_len * batch_size, -1)).float()
+        loss = self.loss_fn(token_pred, target.reshape(-1)).reshape(
+            (seq_len, batch_size)
+        )
         inv_target_mask = ~(target_mask > 0)
         num_tokens = inv_target_mask.sum()
         loss = loss.sum() / num_tokens
         return loss
 
     def _calc_perplexity(self, batch_input, model_output):
-        target_ids = batch_input['target']
-        target_mask = batch_input['target_pad_mask']
-        vocab_dist_output = model_output['token_output']
+        target_ids = batch_input["target"]
+        target_mask = batch_input["target_pad_mask"]
+        vocab_dist_output = model_output["token_output"]
         inv_target_mask = ~(target_mask > 0)
-        log_probs = vocab_dist_output.gather(2,
-                target_ids.unsqueeze(2)).squeeze(2)
+        log_probs = vocab_dist_output.gather(2, target_ids.unsqueeze(2)).squeeze(2)
         log_probs = log_probs * inv_target_mask
         log_probs = log_probs.sum(dim=0)
         seq_lengths = inv_target_mask.sum(dim=0)
@@ -675,9 +735,9 @@ class MegatronBART(MegatronModule):
         return perp.mean().item()
 
     def _calc_char_acc(self, batch_input, model_output):
-        token_ids = batch_input['target']
-        target_mask = batch_input['target_pad_mask']
-        token_output = model_output['token_output']
+        token_ids = batch_input["target"]
+        target_mask = batch_input["target_pad_mask"]
+        token_output = model_output["token_output"]
         target_mask = ~(target_mask > 0)
         (_, pred_ids) = torch.max(token_output.float(), dim=2)
         correct_ids = torch.eq(token_ids, pred_ids)
@@ -687,8 +747,8 @@ class MegatronBART(MegatronModule):
         accuracy = num_correct / total
         return accuracy
 
-    def sample_molecules(self, batch_input, sampling_alg='greedy'):
-        """ Sample molecules from the model
+    def sample_molecules(self, batch_input, sampling_alg="greedy"):
+        """Sample molecules from the model
 
         Args:
             batch_input (dict): Input given to model
@@ -698,32 +758,31 @@ class MegatronBART(MegatronModule):
             ([[str]], [[float]]): Tuple of molecule SMILES strings and log lhs (outer dimension is batch)
         """
 
-        enc_input = batch_input['encoder_input']
-        enc_mask = batch_input['encoder_pad_mask']
+        enc_input = batch_input["encoder_input"]
+        enc_mask = batch_input["encoder_pad_mask"]
 
         # Freezing the weights reduces the amount of memory leakage in the transformer
-        #model.eval()
+        # model.eval()
 
         with torch.no_grad():
 
-            encode_input = {'encoder_input': enc_input,
-                            'encoder_pad_mask': enc_mask}
+            encode_input = {"encoder_input": enc_input, "encoder_pad_mask": enc_mask}
             memory = self.encode(encode_input)
             mem_mask = enc_mask.clone()
             (_, batch_size, _) = tuple(memory.size())
-            decode_fn = partial(self._decode_fn, memory=memory,
-                                mem_pad_mask=mem_mask)
-            #self.sampler.device = self.device
-            if sampling_alg == 'greedy':
-                (mol_strs, log_lhs) = \
-                    self.sampler.greedy_decode(decode_fn, batch_size,device=memory.device)
-            elif sampling_alg == 'beam':
-                (mol_strs, log_lhs) = \
-                    self.sampler.beam_decode(decode_fn, batch_size,
-                        self.num_beams,device=memory.device)
+            decode_fn = partial(self._decode_fn, memory=memory, mem_pad_mask=mem_mask)
+            # self.sampler.device = self.device
+            if sampling_alg == "greedy":
+                (mol_strs, log_lhs) = self.sampler.greedy_decode(
+                    decode_fn, batch_size, device=memory.device
+                )
+            elif sampling_alg == "beam":
+                (mol_strs, log_lhs) = self.sampler.beam_decode(
+                    decode_fn, batch_size, self.num_beams, device=memory.device
+                )
 
         # Must remember to unfreeze!
-        #model.train()
+        # model.train()
 
         return (mol_strs, log_lhs)
 
@@ -733,13 +792,13 @@ class MegatronBART(MegatronModule):
         pad_mask,
         memory,
         mem_pad_mask,
-        ):
+    ):
         decode_input = {
-            'decoder_input': token_ids,
-            'decoder_pad_mask': pad_mask,
-            'memory_input': memory,
-            'memory_pad_mask': mem_pad_mask,
-            }
+            "decoder_input": token_ids,
+            "decoder_pad_mask": pad_mask,
+            "memory_input": memory,
+            "memory_pad_mask": mem_pad_mask,
+        }
         model_output = self.decode(decode_input)
         return model_output
 
@@ -749,31 +808,30 @@ class MegatronBART(MegatronModule):
 
         # Scaling the embeddings like this is done in other transformer libraries
         token_embs = token_embs * math.sqrt(self.d_model)
-        positional_embs = self.pos_emb[:seq_len, :
-                ].unsqueeze(0).transpose(0, 1)
+        positional_embs = self.pos_emb[:seq_len, :].unsqueeze(0).transpose(0, 1)
         embs = token_embs + positional_embs
         embs = self.emb_dropout(embs)
         return embs
 
     def _positional_embs(self):
-        """ Produces a tensor of positional embeddings for the model
+        """Produces a tensor of positional embeddings for the model
 
         Returns a tensor of shape (self.max_seq_len, self.d_model) filled with positional embeddings,
         which are created from sine and cosine waves of varying wavelength
         """
 
-        encs = torch.tensor([dim / self.d_model for dim in range(0,
-                            self.d_model, 2)])
-        encs = 10000 ** encs
-        encs = [(torch.sin(pos / encs), torch.cos(pos / encs))
-                for pos in range(self.max_seq_len)]
-        encs = [torch.stack(enc, dim=1).flatten()[:self.d_model]
-                for enc in encs]
+        encs = torch.tensor([dim / self.d_model for dim in range(0, self.d_model, 2)])
+        encs = 10000**encs
+        encs = [
+            (torch.sin(pos / encs), torch.cos(pos / encs))
+            for pos in range(self.max_seq_len)
+        ]
+        encs = [torch.stack(enc, dim=1).flatten()[: self.d_model] for enc in encs]
         encs = torch.stack(encs)
         return encs
 
     def _generate_square_subsequent_mask(self, sz):
-        """ 
+        """
         Method copied from Pytorch nn.Transformer.
         Generate a square mask for the sequence. The masked positions are filled with float('-inf').
         Unmasked positions are filled with float(0.0).
@@ -782,12 +840,15 @@ class MegatronBART(MegatronModule):
             sz (int): Size of mask to generate
 
         Returns:
-            torch.Tensor: Square autoregressive mask for decode 
+            torch.Tensor: Square autoregressive mask for decode
         """
 
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf'
-                )).masked_fill(mask == 1, float(0.0))
+        mask = (
+            mask.float()
+            .masked_fill(mask == 0, float("-inf"))
+            .masked_fill(mask == 1, float(0.0))
+        )
         return mask
 
     def _init_params(self, method):

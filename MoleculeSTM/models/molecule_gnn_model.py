@@ -1,30 +1,39 @@
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
 from torch_geometric.nn import (MessagePassing, global_add_pool,
                                 global_max_pool, global_mean_pool)
 from torch_geometric.nn.inits import glorot, zeros
-from torch_geometric.utils import add_self_loops, softmax, degree
+from torch_geometric.utils import add_self_loops, degree, softmax
 from torch_scatter import scatter_add
-from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
-from collections import OrderedDict
 
 
 class GINConv(MessagePassing):
     def __init__(self, emb_dim, aggr="add"):
-        '''
-            emb_dim (int): node embedding dimensionality
-        '''
+        """
+        emb_dim (int): node embedding dimensionality
+        """
         super(GINConv, self).__init__(aggr=aggr)
 
-        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(emb_dim, 2 * emb_dim),
+            torch.nn.BatchNorm1d(2 * emb_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(2 * emb_dim, emb_dim),
+        )
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
 
-        self.bond_encoder = BondEncoder(emb_dim = emb_dim)
+        self.bond_encoder = BondEncoder(emb_dim=emb_dim)
 
     def forward(self, x, edge_index, edge_attr):
         edge_embedding = self.bond_encoder(edge_attr)
-        out = self.mlp((1 + self.eps) *x + self.propagate(edge_index, x=x, edge_attr=edge_embedding))
+        out = self.mlp(
+            (1 + self.eps) * x
+            + self.propagate(edge_index, x=x, edge_attr=edge_embedding)
+        )
         return out
 
     def message(self, x_j, edge_attr):
@@ -40,7 +49,7 @@ class GCNConv(MessagePassing):
 
         self.linear = torch.nn.Linear(emb_dim, emb_dim)
         self.root_emb = torch.nn.Embedding(1, emb_dim)
-        self.bond_encoder = BondEncoder(emb_dim = emb_dim)
+        self.bond_encoder = BondEncoder(emb_dim=emb_dim)
 
     def forward(self, x, edge_index, edge_attr):
         x = self.linear(x)
@@ -48,14 +57,16 @@ class GCNConv(MessagePassing):
 
         row, col = edge_index
 
-        #edge_weight = torch.ones((edge_index.size(1), ), device=edge_index.device)
-        deg = degree(row, x.size(0), dtype = x.dtype) + 1
+        # edge_weight = torch.ones((edge_index.size(1), ), device=edge_index.device)
+        deg = degree(row, x.size(0), dtype=x.dtype) + 1
         deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
 
         norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
-        return self.propagate(edge_index, x=x, edge_attr = edge_embedding, norm=norm) + F.relu(x + self.root_emb.weight) * 1./deg.view(-1,1)
+        return self.propagate(
+            edge_index, x=x, edge_attr=edge_embedding, norm=norm
+        ) + F.relu(x + self.root_emb.weight) * 1.0 / deg.view(-1, 1)
 
     def message(self, x_j, edge_attr, norm):
         return norm.view(-1, 1) * F.relu(x_j + edge_attr)
@@ -65,7 +76,7 @@ class GCNConv(MessagePassing):
 
 
 class GNN(nn.Module):
-    def __init__(self, num_layer, emb_dim, JK="last", drop_ratio=0., gnn_type="gin"):
+    def __init__(self, num_layer, emb_dim, JK="last", drop_ratio=0.0, gnn_type="gin"):
 
         if num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -142,9 +153,11 @@ class GNN_graphpred(nn.Module):
         graph_pooling (str): sum, mean, max, attention, set2set
 
     See https://arxiv.org/abs/1810.00826
-    JK-net: https://arxiv.org/abs/1806.03536 """
+    JK-net: https://arxiv.org/abs/1806.03536"""
 
-    def __init__(self, num_layer, emb_dim, num_tasks, JK, graph_pooling, molecule_node_model=None):
+    def __init__(
+        self, num_layer, emb_dim, num_tasks, JK, graph_pooling, molecule_node_model=None
+    ):
         super(GNN_graphpred, self).__init__()
 
         if num_layer < 2:
@@ -170,8 +183,9 @@ class GNN_graphpred(nn.Module):
         self.mult = 1
 
         if self.JK == "concat":
-            self.graph_pred_linear = nn.Linear(self.mult * (self.num_layer + 1) * self.emb_dim,
-                                               self.num_tasks)
+            self.graph_pred_linear = nn.Linear(
+                self.mult * (self.num_layer + 1) * self.emb_dim, self.num_tasks
+            )
         else:
             self.graph_pred_linear = nn.Linear(self.mult * self.emb_dim, self.num_tasks)
         return
@@ -187,7 +201,12 @@ class GNN_graphpred(nn.Module):
             x, edge_index, edge_attr, batch = argv[0], argv[1], argv[2], argv[3]
         elif len(argv) == 1:
             data = argv[0]
-            x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+            x, edge_index, edge_attr, batch = (
+                data.x,
+                data.edge_index,
+                data.edge_attr,
+                data.batch,
+            )
         else:
             raise ValueError("unmatched number of arguments.")
 
