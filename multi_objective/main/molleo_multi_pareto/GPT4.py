@@ -3,9 +3,9 @@ import re
 from rdkit import Chem
 import main.molleo_multi_pareto.crossover as co, main.molleo_multi_pareto.mutate as mu
 openai.api_type = "azure"
-openai.api_base = 
+openai.api_base = 'https://molleo-gpt4.openai.azure.com/'
 openai.api_version = "2023-07-01-preview"
-openai.api_key = 
+openai.api_key = 'd4444444444444444444444444444444'
 import random
 MINIMUM = 1e-10
 

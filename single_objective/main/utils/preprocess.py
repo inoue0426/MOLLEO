@@ -42,8 +42,6 @@ if __name__ == "__main__":
     with open(opts.train_path) as f:
         data = [line.strip("\r\n ").split()[0] for line in f]
 
-    data = 
-
     all_data = pool.map(tensorize, data)
 
     le = int((len(all_data) + num_splits - 1) / num_splits)
