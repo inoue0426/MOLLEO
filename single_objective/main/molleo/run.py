@@ -16,6 +16,7 @@ from main.optimizer import BaseOptimizer
 from main.molleo.mol_lm import MolCLIP
 from main.molleo.biot5 import BioT5
 from main.molleo.GPT4 import GPT4
+from main.molleo.Ollama import Ollama
 from .utils import get_fp_scores
 from .network import create_and_train_network, obtain_model_pred
 
@@ -77,6 +78,8 @@ class GB_GA_Optimizer(BaseOptimizer):
             self.mol_lm = GPT4()
         elif args.mol_lm == "BioT5":
             self.mol_lm = BioT5()
+        elif args.mol_lm == "Ollama":
+            self.mol_lm = Ollama()
 
         self.args = args
         lm_name = "baseline"
@@ -119,7 +122,8 @@ class GB_GA_Optimizer(BaseOptimizer):
             offspring_mol_temp = []
             if self.args.mol_lm == "GPT-4":
                 offspring_mol = [self.mol_lm.edit(mating_tuples, config["mutation_rate"]) for _ in range(config["offspring_size"])]
-                 
+            elif self.args.mol_lm == "Ollama":
+                offspring_mol = [self.mol_lm.edit(mating_tuples, config["mutation_rate"]) for _ in range(config["offspring_size"])]
             elif self.args.mol_lm == "BioT5":
                 top_smi = get_best_mol(population_scores, population_mol) 
 
