@@ -13,12 +13,24 @@ MolLEO is an LLM-augmented evlotuionary algorithm for molecular discovery!
 ## Setups
 You need to get an OpenAI API key for GPT-4. BioT5 is an open-source language model which can work on either GPU or CPU. Currently, this code repo does not support MolLEO(MOLSTM), but we will update soon.
 
+
+### Ollama Setup
+To use Ollama as the language model:
+
+1. Install Ollama by following the instructions on the [Ollama official website](https://ollama.ai/download). If you cannot install Ollama on your local machine, you can download the package from the [Ollama GitHub releases page](https://github.com/ollama/ollama/releases) and run it using the command `ollama serve` in the terminal.
+
+2. After installation, download and set up the LLaMA model by running the following command:
+
+```bash
+ollama pull llama3
+```
+
 ### Package Installation
 ```bash
 conda create -n molleo python=3.9
 conda activate molleo
 conda install pytorch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 pytorch-cuda=12.1 -c pytorch -c nvidia
-pip install PyTDC PyYAML rdkit transformers sentencepiece selfies openai accelerate
+pip install PyTDC PyYAML rdkit transformers sentencepiece selfies openai litellm
 ```
 
 Then we can activate conda via following command. 
@@ -34,6 +46,8 @@ To run experiments on single objective optimization task:
 
 ```bash
 cd single_objective
+# llama3 on jnk3 task
+python run.py molleo --mol_lm Ollama --oracles jnk3 --seed 1 2 3
 # BioT5 on jnk3 task
 python run.py molleo --mol_lm BioT5 --oracles jnk3 --seed 1 2 3
 # GPT-4 on gsk3b task
