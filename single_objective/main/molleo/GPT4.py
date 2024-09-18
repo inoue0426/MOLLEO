@@ -3,9 +3,9 @@ import re
 from rdkit import Chem
 import main.molleo.crossover as co, main.molleo.mutate as mu
 openai.api_type = "azure"
-openai.api_base = 
+openai.api_base = "https://molleo-openai.openai.azure.com/"
 openai.api_version = "2023-07-01-preview"
-openai.api_key = 
+openai.api_key = "d4444444444444444444444444444444"
 import random
 MINIMUM = 1e-10
 
@@ -16,7 +16,7 @@ def query_LLM(question, model="gpt-4", temperature=0.0):
     message.append({"role": "user", "content": prompt1})
 
     params = {
-        "engine": , #Please use your own open engine
+        "engine": "gpt-4", #Please use your own open engine
         "max_tokens": 2048,
         "temperature": temperature,
         "messages": message
